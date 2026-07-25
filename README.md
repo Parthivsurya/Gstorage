@@ -14,6 +14,10 @@ for the full plan.
 - **Phase 1 — OAuth + multi-account login: complete.** PKCE loopback flow links
   N Google accounts; credentials are Fernet-encrypted at rest with the master
   key held in the OS keychain, and refreshed automatically on load.
+- **Phase 2 — Combined storage view: complete.** Dashboard aggregates each
+  account's Drive `about.get` storageQuota into one pooled total (free / used /
+  limit) with per-account usage bars; snapshots cached in the index and
+  refreshed on a worker thread.
 
 ## Requirements
 

@@ -88,6 +88,17 @@ class AccountStore:
 
         return credentials
 
+    def update_quota(
+        self, account_id: int, limit_bytes: int | None, used_bytes: int
+    ) -> None:
+        """Record the latest storageQuota snapshot for an account."""
+        self.db.conn.execute(
+            "UPDATE accounts SET quota_limit_bytes = ?, quota_used_bytes = ?, "
+            "quota_synced_at = datetime('now') WHERE id = ?",
+            (limit_bytes, used_bytes, account_id),
+        )
+        self.db.conn.commit()
+
     def remove_account(self, account_id: int) -> None:
         self.db.conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
         self.db.conn.commit()
