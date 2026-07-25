@@ -18,6 +18,10 @@ for the full plan.
   account's Drive `about.get` storageQuota into one pooled total (free / used /
   limit) with per-account usage bars; snapshots cached in the index and
   refreshed on a worker thread.
+- **Phase 3 — Metadata index + unified listing: complete.** Tabbed UI (Files /
+  Storage). The Files tab renders one virtual folder tree from the index with
+  breadcrumb navigation; create/rename/delete folders, and files display with
+  size and their home account. Uploads that populate it land in Phase 4.
 
 ## Requirements
 
