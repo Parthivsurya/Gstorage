@@ -68,6 +68,16 @@ class IndexStore:
         ).fetchall()
         return [self._folder(r) for r in rows]
 
+    def get_or_create_folder(self, name: str, parent_id: int | None = None) -> int:
+        clause, params = _parent_clause(parent_id)
+        row = self.db.conn.execute(
+            f"SELECT id FROM folders WHERE name = ? AND {clause}",
+            (name, *params),
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        return self.create_folder(name, parent_id)
+
     def rename_folder(self, folder_id: int, name: str) -> None:
         self.db.conn.execute(
             "UPDATE folders SET name = ? WHERE id = ?", (name, folder_id)
@@ -131,6 +141,51 @@ class IndexStore:
             (file_id,),
         ).fetchone()
         return self._file(row) if row else None
+
+    def list_files_for_account(self, account_id: int) -> list[FileEntry]:
+        rows = self.db.conn.execute(
+            "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
+            "a.email AS home_account_email, f.drive_file_id, f.created_at, "
+            "f.modified_at FROM files f "
+            "LEFT JOIN accounts a ON a.id = f.home_account_id "
+            "WHERE f.home_account_id = ?",
+            (account_id,),
+        ).fetchall()
+        return [self._file(r) for r in rows]
+
+    def find_file_by_drive_id(
+        self, account_id: int, drive_file_id: str
+    ) -> FileEntry | None:
+        row = self.db.conn.execute(
+            "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
+            "a.email AS home_account_email, f.drive_file_id, f.created_at, "
+            "f.modified_at FROM files f "
+            "LEFT JOIN accounts a ON a.id = f.home_account_id "
+            "WHERE f.home_account_id = ? AND f.drive_file_id = ?",
+            (account_id, drive_file_id),
+        ).fetchone()
+        return self._file(row) if row else None
+
+    def descendant_files(self, folder_id: int) -> list[FileEntry]:
+        """Every file within a folder and all its subfolders.
+
+        Used by folder deletion, since a folder's files may live on different
+        accounts and each real Drive file must be removed individually.
+        """
+        rows = self.db.conn.execute(
+            "WITH RECURSIVE sub(id) AS ("
+            "  SELECT ? "
+            "  UNION ALL "
+            "  SELECT f.id FROM folders f JOIN sub s ON f.parent_id = s.id"
+            ") "
+            "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
+            "a.email AS home_account_email, f.drive_file_id, f.created_at, "
+            "f.modified_at FROM files f "
+            "LEFT JOIN accounts a ON a.id = f.home_account_id "
+            "WHERE f.parent_id IN (SELECT id FROM sub)",
+            (folder_id,),
+        ).fetchall()
+        return [self._file(r) for r in rows]
 
     def rename_file(self, file_id: int, name: str) -> None:
         self.db.conn.execute(

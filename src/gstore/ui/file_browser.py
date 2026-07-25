@@ -1,8 +1,8 @@
 """Files tab: the unified browser.
 
 Renders one virtual tree from the index regardless of which account each file
-physically lives on. In Phase 3 files appear here once uploaded (Phase 4); the
-folder structure is fully interactive now.
+physically lives on, and drives the whole file lifecycle: upload (Phase 4),
+download and delete (Phase 5).
 """
 
 from __future__ import annotations
@@ -23,7 +23,9 @@ from PySide6.QtWidgets import (
 )
 
 from gstore.format import human_bytes
-from gstore.index import FileEntry, Folder, IndexStore
+from gstore.index import FileEntry, IndexStore
+from gstore.ui.delete_worker import DeleteWorker
+from gstore.ui.download_worker import DownloadWorker
 from gstore.ui.upload_worker import UploadWorker
 
 # QListWidgetItem UserRole payload: (kind, id)
@@ -32,14 +34,16 @@ _FILE = "file"
 
 
 class FileBrowser(QWidget):
-    # Emitted after a successful upload so the storage dashboard can refresh.
-    uploaded = Signal()
+    # Emitted after any change that affects account usage (upload / delete).
+    changed = Signal()
 
     def __init__(self, index: IndexStore) -> None:
         super().__init__()
         self.index = index
         self.current_parent_id: int | None = None  # None == virtual root
         self._upload_worker: UploadWorker | None = None
+        self._download_worker: DownloadWorker | None = None
+        self._delete_worker: DeleteWorker | None = None
 
         self.breadcrumb = QHBoxLayout()
         self.breadcrumb.setSpacing(2)
@@ -52,6 +56,8 @@ class FileBrowser(QWidget):
 
         self.upload_button = QPushButton("Upload file")
         self.upload_button.clicked.connect(self._on_upload)
+        self.download_button = QPushButton("Download")
+        self.download_button.clicked.connect(self._on_download)
         self.new_folder_button = QPushButton("New folder")
         self.new_folder_button.clicked.connect(self._on_new_folder)
         self.rename_button = QPushButton("Rename")
@@ -60,27 +66,31 @@ class FileBrowser(QWidget):
         self.delete_button.clicked.connect(self._on_delete)
 
         buttons = QHBoxLayout()
-        buttons.addWidget(self.upload_button)
-        buttons.addWidget(self.new_folder_button)
-        buttons.addWidget(self.rename_button)
-        buttons.addWidget(self.delete_button)
+        for button in (
+            self.upload_button,
+            self.download_button,
+            self.new_folder_button,
+            self.rename_button,
+            self.delete_button,
+        ):
+            buttons.addWidget(button)
         buttons.addStretch()
 
         self.empty_hint = QLabel("This folder is empty.")
         self.empty_hint.setStyleSheet("color: #888;")
 
-        self.upload_bar = QProgressBar()
-        self.upload_bar.setVisible(False)
-        self.upload_status = QLabel("")
-        self.upload_status.setStyleSheet("color: #888;")
+        self.transfer_bar = QProgressBar()
+        self.transfer_bar.setVisible(False)
+        self.transfer_status = QLabel("")
+        self.transfer_status.setStyleSheet("color: #888;")
 
         layout = QVBoxLayout()
         layout.addWidget(breadcrumb_box)
         layout.addWidget(self.entries)
         layout.addWidget(self.empty_hint)
         layout.addLayout(buttons)
-        layout.addWidget(self.upload_bar)
-        layout.addWidget(self.upload_status)
+        layout.addWidget(self.transfer_bar)
+        layout.addWidget(self.transfer_status)
         self.setLayout(layout)
 
         self.refresh()
@@ -150,56 +160,104 @@ class FileBrowser(QWidget):
         if kind == _FOLDER:
             self.navigate_to(item_id)
 
+    # -- selection / button state --------------------------------------------
+
+    def _selected(self) -> tuple[str, int] | None:
+        item = self.entries.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _busy(self) -> bool:
+        return any(
+            w is not None
+            for w in (self._upload_worker, self._download_worker, self._delete_worker)
+        )
+
+    def _update_buttons(self) -> None:
+        selection = self._selected()
+        is_file = selection is not None and selection[0] == _FILE
+        busy = self._busy()
+        self.upload_button.setEnabled(not busy)
+        self.download_button.setEnabled(is_file and not busy)
+        self.rename_button.setEnabled(selection is not None and not busy)
+        self.delete_button.setEnabled(selection is not None and not busy)
+
+    def _begin_transfer(self, message: str, determinate: bool) -> None:
+        self.transfer_bar.setRange(0, 100 if determinate else 0)
+        self.transfer_bar.setValue(0)
+        self.transfer_bar.setVisible(True)
+        self.transfer_status.setText(message)
+        self._update_buttons()
+
+    def _on_transfer_progress(self, fraction: float) -> None:
+        self.transfer_bar.setValue(int(fraction * 100))
+
     # -- upload ---------------------------------------------------------------
 
     def _on_upload(self) -> None:
-        if self._upload_worker is not None:
+        if self._busy():
             return
         path, _ = QFileDialog.getOpenFileName(self, "Choose a file to upload")
         if not path:
             return
-
-        self.upload_button.setEnabled(False)
-        self.upload_bar.setRange(0, 100)
-        self.upload_bar.setValue(0)
-        self.upload_bar.setVisible(True)
-        self.upload_status.setText("Uploading…")
+        self._begin_transfer("Uploading…", determinate=True)
 
         worker = UploadWorker(path, self.current_parent_id, self)
-        worker.progress.connect(self._on_upload_progress)
+        worker.progress.connect(self._on_transfer_progress)
         worker.succeeded.connect(self._on_upload_succeeded)
         worker.failed.connect(self._on_upload_failed)
         worker.finished.connect(self._on_upload_finished)
         self._upload_worker = worker
         worker.start()
 
-    def _on_upload_progress(self, fraction: float) -> None:
-        self.upload_bar.setValue(int(fraction * 100))
-
     def _on_upload_succeeded(self, name: str, email: str) -> None:
-        self.upload_status.setText(f"Uploaded {name} → {email}")
+        self.transfer_status.setText(f"Uploaded {name} → {email}")
         self.refresh()
-        self.uploaded.emit()
+        self.changed.emit()
 
     def _on_upload_failed(self, message: str) -> None:
-        self.upload_status.setText("")
+        self.transfer_status.setText("")
         QMessageBox.warning(self, "Upload failed", message)
 
     def _on_upload_finished(self) -> None:
         self._upload_worker = None
-        self.upload_button.setEnabled(True)
-        self.upload_bar.setVisible(False)
+        self.transfer_bar.setVisible(False)
+        self._update_buttons()
 
-    # -- actions --------------------------------------------------------------
+    # -- download -------------------------------------------------------------
 
-    def _selected(self) -> tuple[str, int] | None:
-        item = self.entries.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
+    def _on_download(self) -> None:
+        selection = self._selected()
+        if selection is None or selection[0] != _FILE or self._busy():
+            return
+        entry = self.index.get_file(selection[1])
+        if entry is None:
+            return
+        dest, _ = QFileDialog.getSaveFileName(self, "Save file as", entry.name)
+        if not dest:
+            return
+        self._begin_transfer("Downloading…", determinate=True)
 
-    def _update_buttons(self) -> None:
-        has_selection = self._selected() is not None
-        self.rename_button.setEnabled(has_selection)
-        self.delete_button.setEnabled(has_selection)
+        worker = DownloadWorker(entry.id, dest, self)
+        worker.progress.connect(self._on_transfer_progress)
+        worker.succeeded.connect(self._on_download_succeeded)
+        worker.failed.connect(self._on_download_failed)
+        worker.finished.connect(self._on_download_finished)
+        self._download_worker = worker
+        worker.start()
+
+    def _on_download_succeeded(self, dest: str) -> None:
+        self.transfer_status.setText(f"Saved to {dest}")
+
+    def _on_download_failed(self, message: str) -> None:
+        self.transfer_status.setText("")
+        QMessageBox.warning(self, "Download failed", message)
+
+    def _on_download_finished(self) -> None:
+        self._download_worker = None
+        self.transfer_bar.setVisible(False)
+        self._update_buttons()
+
+    # -- folder / rename ------------------------------------------------------
 
     def _on_new_folder(self) -> None:
         name, ok = QInputDialog.getText(self, "New folder", "Folder name:")
@@ -220,9 +278,7 @@ class FileBrowser(QWidget):
         )
         if current is None:
             return
-        name, ok = QInputDialog.getText(
-            self, "Rename", "New name:", text=current.name
-        )
+        name, ok = QInputDialog.getText(self, "Rename", "New name:", text=current.name)
         name = name.strip()
         if ok and name:
             if kind == _FOLDER:
@@ -231,28 +287,53 @@ class FileBrowser(QWidget):
                 self.index.rename_file(item_id, name)
             self.refresh()
 
+    # -- delete ---------------------------------------------------------------
+
     def _on_delete(self) -> None:
         selection = self._selected()
-        if selection is None:
+        if selection is None or self._busy():
             return
         kind, item_id = selection
         if kind == _FOLDER:
             message = (
-                "Delete this folder and everything inside it from Gstore?\n\n"
-                "This removes index entries only."
+                "Delete this folder and everything inside it?\n\n"
+                "Files are removed from Google Drive and from Gstore."
             )
         else:
             message = (
-                "Remove this file from Gstore?\n\n"
-                "This removes it from the index only; the copy in Google Drive "
-                "is deleted in a later phase."
+                "Delete this file?\n\n"
+                "It is removed from Google Drive and from Gstore."
             )
         if (
             QMessageBox.question(self, "Delete", message)
-            == QMessageBox.StandardButton.Yes
+            != QMessageBox.StandardButton.Yes
         ):
-            if kind == _FOLDER:
-                self.index.delete_folder(item_id)
-            else:
-                self.index.delete_file(item_id)
-            self.refresh()
+            return
+
+        self._begin_transfer("Deleting…", determinate=False)
+        worker = DeleteWorker(kind, item_id, self)
+        worker.succeeded.connect(self._on_delete_succeeded)
+        worker.failed.connect(self._on_delete_failed)
+        worker.finished.connect(self._on_delete_finished)
+        self._delete_worker = worker
+        worker.start()
+
+    def _on_delete_succeeded(self, failures: int) -> None:
+        if failures:
+            self.transfer_status.setText(
+                f"Deleted, but {failures} Drive file(s) could not be removed "
+                "(account offline or revoked). Kept for retry."
+            )
+        else:
+            self.transfer_status.setText("Deleted.")
+        self.refresh()
+        self.changed.emit()
+
+    def _on_delete_failed(self, message: str) -> None:
+        self.transfer_status.setText("")
+        QMessageBox.warning(self, "Delete failed", message)
+
+    def _on_delete_finished(self) -> None:
+        self._delete_worker = None
+        self.transfer_bar.setVisible(False)
+        self._update_buttons()

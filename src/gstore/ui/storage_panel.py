@@ -28,11 +28,14 @@ from gstore.format import human_bytes
 from gstore.ui.account_row import AccountRow
 from gstore.ui.login_worker import LoginWorker
 from gstore.ui.quota_worker import QuotaWorker
+from gstore.ui.reconcile_worker import ReconcileWorker
 
 
 class StoragePanel(QWidget):
     # Emitted when the set of linked accounts changes (added/removed).
     accounts_changed = Signal()
+    # Emitted when a reconcile changes the file index (prune/recover).
+    index_changed = Signal()
 
     def __init__(self, db: Database) -> None:
         super().__init__()
@@ -40,6 +43,7 @@ class StoragePanel(QWidget):
         self.accounts = AccountStore(db)
         self._login_worker: LoginWorker | None = None
         self._quota_worker: QuotaWorker | None = None
+        self._reconcile_worker: ReconcileWorker | None = None
         self._quota_errors: list[str] = []
 
         self._build_summary()
@@ -107,10 +111,18 @@ class StoragePanel(QWidget):
         self.refresh_button = QPushButton("Refresh usage")
         self.refresh_button.clicked.connect(self._start_quota_refresh)
 
+        self.repair_button = QPushButton("Repair / re-sync")
+        self.repair_button.setToolTip(
+            "Reconcile the index with each Drive: drop files deleted elsewhere, "
+            "recover app files missing from the index."
+        )
+        self.repair_button.clicked.connect(self._start_reconcile)
+
         self.button_row = QHBoxLayout()
         self.button_row.addWidget(self.add_button)
         self.button_row.addWidget(self.remove_button)
         self.button_row.addWidget(self.refresh_button)
+        self.button_row.addWidget(self.repair_button)
         self.button_row.addStretch()
 
     # -- rendering ------------------------------------------------------------
@@ -211,6 +223,41 @@ class StoragePanel(QWidget):
             )
         else:
             self.status.setText("Usage up to date")
+
+    # -- repair / reconcile ---------------------------------------------------
+
+    def _start_reconcile(self) -> None:
+        if self._reconcile_worker is not None:
+            return
+        if self.accounts.count() == 0:
+            self.status.setText("Link an account before repairing.")
+            return
+        self.repair_button.setEnabled(False)
+        self.status.setText("Repairing / re-syncing…")
+
+        worker = ReconcileWorker(self)
+        worker.finished_summary.connect(self._on_reconcile_summary)
+        worker.account_failed.connect(self._on_reconcile_account_failed)
+        worker.finished.connect(self._on_reconcile_finished)
+        self._reconcile_worker = worker
+        worker.start()
+
+    def _on_reconcile_summary(
+        self, checked: int, pruned: int, recovered: int
+    ) -> None:
+        self.status.setText(
+            f"Re-synced {checked} account(s): "
+            f"{pruned} pruned, {recovered} recovered."
+        )
+        if pruned or recovered:
+            self.index_changed.emit()
+
+    def _on_reconcile_account_failed(self, email: str, message: str) -> None:
+        self._quota_errors.append(f"{email}: {message}")
+
+    def _on_reconcile_finished(self) -> None:
+        self._reconcile_worker = None
+        self.repair_button.setEnabled(True)
 
     # -- add account ----------------------------------------------------------
 

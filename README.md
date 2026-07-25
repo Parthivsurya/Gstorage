@@ -27,6 +27,16 @@ for the full plan.
   account's Drive via a resumable upload (progress bar) → records it in the
   index so it appears in the browser. Every Drive call is wrapped in
   exponential-backoff retry for rate-limit / server errors.
+- **Phase 5 — Download, delete & hardening: complete. End of v1.** Download a
+  file back to disk from its home account; delete files/folders from both Drive
+  and the index (folder deletes span accounts, with partial-failure handling);
+  revoked/expired accounts surface a clear re-link message; and **Repair /
+  re-sync** reconciles the index with each Drive — pruning files deleted
+  elsewhere and recovering app files missing from the index.
+
+**v1 is feature-complete (Phases 0–5): a usable combined Drive.** Phase 6
+(chunking for single files larger than one account) and Phase 7 (FUSE mount)
+are additive.
 
 ## Requirements
 
