@@ -14,9 +14,12 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS accounts (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     email              TEXT NOT NULL UNIQUE,
-    -- Reference/label under which the encrypted refresh token is stored in the
-    -- OS keychain (never the token itself). Populated in Phase 1.
+    -- Identifier of the keychain-held encryption key used for token_blob
+    -- (supports future key rotation). Populated in Phase 1.
     token_ref          TEXT,
+    -- Google credentials (incl. refresh token) serialized then Fernet-encrypted
+    -- with the master key held in the OS keychain. Encrypted at rest. Phase 1.
+    token_blob         BLOB,
     -- Last storageQuota snapshot (bytes), refreshed via about.get. Phase 2.
     quota_limit_bytes  INTEGER,
     quota_used_bytes   INTEGER,

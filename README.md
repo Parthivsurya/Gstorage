@@ -9,8 +9,11 @@ for the full plan.
 
 ## Status
 
-**Phase 0 — Setup: complete.** App scaffold renders a window; local SQLite
-index is created in the OS app-data directory.
+- **Phase 0 — Setup: complete.** App scaffold renders a window; local SQLite
+  index created in the OS app-data directory.
+- **Phase 1 — OAuth + multi-account login: complete.** PKCE loopback flow links
+  N Google accounts; credentials are Fernet-encrypted at rest with the master
+  key held in the OS keychain, and refreshed automatically on load.
 
 ## Requirements
 
@@ -58,5 +61,22 @@ Phase 1 (OAuth login) needs a Google Cloud project. Manual steps:
 3. Configure the **OAuth consent screen** (External, Testing mode — add your
    own Google accounts as test users).
 4. Create an **OAuth client ID** of type **Desktop app**.
-5. Download the client JSON; it will be wired into the login flow in Phase 1.
-   Requested scope: `https://www.googleapis.com/auth/drive.file`.
+5. Download the client JSON. Requested scope:
+   `https://www.googleapis.com/auth/drive.file`.
+
+## Adding accounts (Phase 1)
+
+Place the downloaded client JSON where Gstore looks for it:
+
+```bash
+# macOS default location:
+cp ~/Downloads/client_secret_*.json \
+   "$HOME/Library/Application Support/Gstore/client_secret.json"
+# or point at it explicitly:
+export GSTORE_CLIENT_SECRETS=/path/to/client_secret.json
+```
+
+Then launch `gstore` and click **Add Google account** for each account. The app
+opens your browser, you consent, and the account appears in the list. Repeat for
+all accounts you want to pool. Tokens are encrypted at rest; the encryption key
+lives in your OS keychain.
