@@ -21,7 +21,12 @@ for the full plan.
 - **Phase 3 — Metadata index + unified listing: complete.** Tabbed UI (Files /
   Storage). The Files tab renders one virtual folder tree from the index with
   breadcrumb navigation; create/rename/delete folders, and files display with
-  size and their home account. Uploads that populate it land in Phase 4.
+  size and their home account.
+- **Phase 4 — Upload with smart placement: complete.** Upload a file → it picks
+  the account with the most free space that fits → streams straight to that
+  account's Drive via a resumable upload (progress bar) → records it in the
+  index so it appears in the browser. Every Drive call is wrapped in
+  exponential-backoff retry for rate-limit / server errors.
 
 ## Requirements
 

@@ -115,6 +115,10 @@ class StoragePanel(QWidget):
 
     # -- rendering ------------------------------------------------------------
 
+    def reload(self) -> None:
+        """Re-render from the index after an external change (e.g. an upload)."""
+        self._refresh_dashboard()
+
     def _refresh_dashboard(self) -> None:
         accounts = self.accounts.list_accounts()
 

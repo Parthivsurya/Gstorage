@@ -26,6 +26,9 @@ class MainWindow(QMainWindow):
         self.file_browser = FileBrowser(IndexStore(db))
         self.storage_panel = StoragePanel(db)
 
+        # An upload changes account usage; refresh the dashboard when it lands.
+        self.file_browser.uploaded.connect(self.storage_panel.reload)
+
         tabs = QTabWidget()
         tabs.addTab(self.file_browser, "Files")
         tabs.addTab(self.storage_panel, "Storage")

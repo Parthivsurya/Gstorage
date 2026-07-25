@@ -7,14 +7,16 @@ folder structure is fully interactive now.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from gstore.format import human_bytes
 from gstore.index import FileEntry, Folder, IndexStore
+from gstore.ui.upload_worker import UploadWorker
 
 # QListWidgetItem UserRole payload: (kind, id)
 _FOLDER = "folder"
@@ -29,10 +32,14 @@ _FILE = "file"
 
 
 class FileBrowser(QWidget):
+    # Emitted after a successful upload so the storage dashboard can refresh.
+    uploaded = Signal()
+
     def __init__(self, index: IndexStore) -> None:
         super().__init__()
         self.index = index
         self.current_parent_id: int | None = None  # None == virtual root
+        self._upload_worker: UploadWorker | None = None
 
         self.breadcrumb = QHBoxLayout()
         self.breadcrumb.setSpacing(2)
@@ -43,6 +50,8 @@ class FileBrowser(QWidget):
         self.entries.itemDoubleClicked.connect(self._on_double_click)
         self.entries.currentItemChanged.connect(self._update_buttons)
 
+        self.upload_button = QPushButton("Upload file")
+        self.upload_button.clicked.connect(self._on_upload)
         self.new_folder_button = QPushButton("New folder")
         self.new_folder_button.clicked.connect(self._on_new_folder)
         self.rename_button = QPushButton("Rename")
@@ -51,6 +60,7 @@ class FileBrowser(QWidget):
         self.delete_button.clicked.connect(self._on_delete)
 
         buttons = QHBoxLayout()
+        buttons.addWidget(self.upload_button)
         buttons.addWidget(self.new_folder_button)
         buttons.addWidget(self.rename_button)
         buttons.addWidget(self.delete_button)
@@ -59,11 +69,18 @@ class FileBrowser(QWidget):
         self.empty_hint = QLabel("This folder is empty.")
         self.empty_hint.setStyleSheet("color: #888;")
 
+        self.upload_bar = QProgressBar()
+        self.upload_bar.setVisible(False)
+        self.upload_status = QLabel("")
+        self.upload_status.setStyleSheet("color: #888;")
+
         layout = QVBoxLayout()
         layout.addWidget(breadcrumb_box)
         layout.addWidget(self.entries)
         layout.addWidget(self.empty_hint)
         layout.addLayout(buttons)
+        layout.addWidget(self.upload_bar)
+        layout.addWidget(self.upload_status)
         self.setLayout(layout)
 
         self.refresh()
@@ -132,6 +149,46 @@ class FileBrowser(QWidget):
         kind, item_id = item.data(Qt.ItemDataRole.UserRole)
         if kind == _FOLDER:
             self.navigate_to(item_id)
+
+    # -- upload ---------------------------------------------------------------
+
+    def _on_upload(self) -> None:
+        if self._upload_worker is not None:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Choose a file to upload")
+        if not path:
+            return
+
+        self.upload_button.setEnabled(False)
+        self.upload_bar.setRange(0, 100)
+        self.upload_bar.setValue(0)
+        self.upload_bar.setVisible(True)
+        self.upload_status.setText("Uploading…")
+
+        worker = UploadWorker(path, self.current_parent_id, self)
+        worker.progress.connect(self._on_upload_progress)
+        worker.succeeded.connect(self._on_upload_succeeded)
+        worker.failed.connect(self._on_upload_failed)
+        worker.finished.connect(self._on_upload_finished)
+        self._upload_worker = worker
+        worker.start()
+
+    def _on_upload_progress(self, fraction: float) -> None:
+        self.upload_bar.setValue(int(fraction * 100))
+
+    def _on_upload_succeeded(self, name: str, email: str) -> None:
+        self.upload_status.setText(f"Uploaded {name} → {email}")
+        self.refresh()
+        self.uploaded.emit()
+
+    def _on_upload_failed(self, message: str) -> None:
+        self.upload_status.setText("")
+        QMessageBox.warning(self, "Upload failed", message)
+
+    def _on_upload_finished(self) -> None:
+        self._upload_worker = None
+        self.upload_button.setEnabled(True)
+        self.upload_bar.setVisible(False)
 
     # -- actions --------------------------------------------------------------
 
