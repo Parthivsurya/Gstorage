@@ -1,0 +1,12 @@
+# GUI
+PySide6>=6.7
+
+# Cross-platform app-data / config paths
+platformdirs>=4.2
+
+# Phase 1+ (declared now so the environment is stable as we build)
+google-auth>=2.29
+google-auth-oauthlib>=1.2
+google-api-python-client>=2.130
+keyring>=25.0
+cryptography>=42.0

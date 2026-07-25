@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gstore"
+version = "0.0.1"
+description = "Multi-account Google Drive aggregator (desktop, local-only)"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.7",
+    "platformdirs>=4.2",
+    "google-auth>=2.29",
+    "google-auth-oauthlib>=1.2",
+    "google-api-python-client>=2.130",
+    "keyring>=25.0",
+    "cryptography>=42.0",
+]
+
+[project.scripts]
+gstore = "gstore.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gstore = ["db/*.sql"]
