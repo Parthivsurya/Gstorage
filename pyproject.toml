@@ -24,4 +24,4 @@ gstore = "gstore.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-gstore = ["db/*.sql"]
+gstore = ["db/*.sql", "auth/client_config.json"]

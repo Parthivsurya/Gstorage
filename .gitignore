@@ -5,3 +5,7 @@ __pycache__/
 build/
 dist/
 .DS_Store
+
+# Bundled OAuth Desktop client, injected at build time — never commit real
+# credentials. See README "Bundling the OAuth client".
+src/gstore/auth/client_config.json

@@ -75,31 +75,46 @@ src/gstore/
     main_window.py  Qt main window
 ```
 
-## Google Cloud setup (required before Phase 1)
+## Adding accounts
 
-Phase 1 (OAuth login) needs a Google Cloud project. Manual steps:
+Launch `gstore` and click **Add Google account** for each account. The app opens
+your browser, you consent with "Sign in with Google", and the account appears in
+the list. Repeat for all accounts you want to pool. Tokens are encrypted at rest;
+the encryption key lives in your OS keychain.
 
-1. Create a project at <https://console.cloud.google.com>.
-2. Enable the **Google Drive API**.
-3. Configure the **OAuth consent screen** (External, Testing mode — add your
-   own Google accounts as test users).
-4. Create an **OAuth client ID** of type **Desktop app**.
-5. Download the client JSON. Requested scope:
-   `https://www.googleapis.com/auth/drive.file`.
+End users do **not** need a Google Cloud project — the app ships its own OAuth
+Desktop client, so there is no console setup and no client JSON to download.
 
-## Adding accounts (Phase 1)
+## Bundling the OAuth client (maintainers only)
 
-Place the downloaded client JSON where Gstore looks for it:
+The shipped client lives at `src/gstore/auth/client_config.json`. It is a Desktop
+(PKCE) client, which has no confidential secret to protect, but the file is
+**gitignored** so real credentials are not committed — inject it at build time:
 
 ```bash
-# macOS default location:
-cp ~/Downloads/client_secret_*.json \
-   "$HOME/Library/Application Support/Gstore/client_secret.json"
-# or point at it explicitly:
-export GSTORE_CLIENT_SECRETS=/path/to/client_secret.json
+# copy your Desktop-app client JSON into the package before packaging:
+cp /path/to/client_secret.json src/gstore/auth/client_config.json
 ```
 
-Then launch `gstore` and click **Add Google account** for each account. The app
-opens your browser, you consent, and the account appears in the list. Repeat for
-all accounts you want to pool. Tokens are encrypted at rest; the encryption key
-lives in your OS keychain.
+To point Gstore at a different Google Cloud project (development, or your own
+client), override the bundled client with either:
+
+```bash
+export GSTORE_CLIENT_SECRETS=/path/to/client_secret.json
+# or drop it at the app-data path:
+cp /path/to/client_secret.json \
+   "$HOME/Library/Application Support/Gstore/client_secret.json"
+```
+
+Resolution order: `GSTORE_CLIENT_SECRETS` → app-data `client_secret.json` →
+bundled client. Requested scope: `https://www.googleapis.com/auth/drive.file`.
+
+### Google Cloud project setup (maintainers only)
+
+To create or rotate the bundled client:
+
+1. Create a project at <https://console.cloud.google.com> and enable the
+   **Google Drive API**.
+2. Configure the **OAuth consent screen** (External). Publish to **In
+   production** so refresh tokens don't expire and there's no test-user cap.
+3. Create an **OAuth client ID** of type **Desktop app** and download its JSON.

@@ -9,11 +9,13 @@ client secret needs protecting and no server of ours is involved.
 
 from __future__ import annotations
 
-from pathlib import Path
+import json
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+
+from gstore import config
 
 # `drive.file` limits the app to files it creates — far lighter to verify than
 # full-drive access. about.get (used here and in the Phase 2 storage view) is
@@ -25,23 +27,39 @@ SUCCESS_MESSAGE = "Gstore: account linked. You can close this tab and return to 
 
 
 class ClientSecretsNotFound(FileNotFoundError):
-    """Raised when the OAuth Desktop-app client JSON is missing."""
+    """Raised when no OAuth Desktop-app client can be resolved."""
 
 
-def run_login_flow(client_secrets_path: Path) -> Credentials:
+def _load_client_config() -> dict:
+    """Resolve the OAuth Desktop client: user override, else bundled.
+
+    A user-supplied file (``GSTORE_CLIENT_SECRETS`` or the app-data
+    ``client_secret.json``) wins; otherwise the client shipped with the app is
+    used, so end users never touch Google Cloud Console.
+    """
+    path = config.client_secrets_path()
+    if path is not None:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    bundled = config.read_bundled_client_config()
+    if bundled is not None:
+        return bundled
+
+    raise ClientSecretsNotFound(
+        "No OAuth client available. Expected a bundled client shipped with the "
+        f"app, or a user-supplied JSON via ${config.CLIENT_SECRETS_ENV} or at "
+        f"{config.data_dir() / config.CLIENT_SECRETS_FILENAME}."
+    )
+
+
+def run_login_flow() -> Credentials:
     """Drive the interactive login and return authorized credentials.
 
     Opens the system browser and blocks until the user consents (or the flow
     times out / is cancelled). Call this off the UI thread.
     """
-    if not client_secrets_path.exists():
-        raise ClientSecretsNotFound(
-            f"OAuth client secrets not found at {client_secrets_path}. "
-            "Download the Desktop-app client JSON from Google Cloud Console."
-        )
-
-    flow = InstalledAppFlow.from_client_secrets_file(
-        str(client_secrets_path),
+    flow = InstalledAppFlow.from_client_config(
+        _load_client_config(),
         scopes=SCOPES,
         autogenerate_code_verifier=True,  # enables PKCE (S256)
     )

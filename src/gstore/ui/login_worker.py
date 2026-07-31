@@ -9,7 +9,6 @@ from __future__ import annotations
 from PySide6.QtCore import QThread, Signal
 
 from gstore.auth.oauth import fetch_account_email, run_login_flow
-from gstore.config import client_secrets_path
 
 
 class LoginWorker(QThread):
@@ -19,7 +18,7 @@ class LoginWorker(QThread):
 
     def run(self) -> None:  # noqa: D102 (QThread entry point)
         try:
-            credentials = run_login_flow(client_secrets_path())
+            credentials = run_login_flow()
             email = fetch_account_email(credentials)
             self.succeeded.emit(credentials, email)
         except Exception as exc:  # surfaced to the user via the failed signal
