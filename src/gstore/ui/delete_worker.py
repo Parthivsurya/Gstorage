@@ -51,6 +51,14 @@ class DeleteWorker(QThread):
         if entry is None:
             self.succeeded.emit(0)
             return
+        if entry.is_chunked:
+            # Best-effort across accounts; keep the row if any chunk can't be
+            # removed so its Drive file isn't orphaned and the user can retry.
+            failures = self._delete_chunks(accounts, index, entry.id)
+            if failures == 0:
+                index.delete_file(self.item_id)  # cascade drops chunk rows
+            self.succeeded.emit(failures)
+            return
         if entry.drive_file_id and entry.home_account_id is not None:
             credentials = accounts.get_credentials(entry.home_account_id)
             delete_drive_file(credentials, entry.drive_file_id)
@@ -60,7 +68,13 @@ class DeleteWorker(QThread):
     def _delete_folder(self, accounts: AccountStore, index: IndexStore) -> None:
         failures = 0
         for entry in index.descendant_files(self.item_id):
-            if entry.drive_file_id and entry.home_account_id is not None:
+            if entry.is_chunked:
+                chunk_failures = self._delete_chunks(accounts, index, entry.id)
+                if chunk_failures == 0:
+                    index.delete_file(entry.id)
+                else:
+                    failures += chunk_failures
+            elif entry.drive_file_id and entry.home_account_id is not None:
                 try:
                     credentials = accounts.get_credentials(entry.home_account_id)
                     delete_drive_file(credentials, entry.drive_file_id)
@@ -73,3 +87,22 @@ class DeleteWorker(QThread):
         if failures == 0:
             index.delete_folder(self.item_id)
         self.succeeded.emit(failures)
+
+    def _delete_chunks(
+        self, accounts: AccountStore, index: IndexStore, file_id: int
+    ) -> int:
+        """Delete every chunk's Drive file; return how many couldn't be removed."""
+        failures = 0
+        creds_cache: dict[int, object] = {}
+        for chunk in index.list_chunks(file_id):
+            if not chunk.drive_file_id or chunk.account_id is None:
+                continue  # nothing reachable to delete
+            try:
+                credentials = creds_cache.get(chunk.account_id)
+                if credentials is None:
+                    credentials = accounts.get_credentials(chunk.account_id)
+                    creds_cache[chunk.account_id] = credentials
+                delete_drive_file(credentials, chunk.drive_file_id)
+            except Exception:
+                failures += 1
+        return failures

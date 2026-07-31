@@ -75,15 +75,17 @@ CREATE TABLE IF NOT EXISTS uploads (
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Reserved for Phase 6 (chunking across accounts). Defined now so the schema
--- is stable; unused in v1.
+-- Pieces of a chunked file (Phase B), distributed across accounts when a file
+-- is too big for any single account's free space. A file is "chunked" when it
+-- has rows here; such files carry NULL home_account_id/drive_file_id, and the
+-- whole-file checksum lives in files.md5 for end-to-end verification.
 CREATE TABLE IF NOT EXISTS chunks (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id       INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     sequence      INTEGER NOT NULL,
     account_id    INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
     drive_file_id TEXT,
-    sha256        TEXT,
+    md5           TEXT,
     size_bytes    INTEGER NOT NULL DEFAULT 0,
     UNIQUE(file_id, sequence)
 );

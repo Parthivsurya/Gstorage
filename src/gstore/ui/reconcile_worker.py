@@ -43,9 +43,15 @@ class ReconcileWorker(QThread):
                         index.delete_file(entry.id)
                         pruned += 1
 
+                # Chunk part-files belong to chunked files, not the files table;
+                # don't mistake them for orphans to recover.
+                chunk_ids = index.chunk_drive_ids(account.id)
+
                 # Recover: on Drive but missing from the index.
                 recovered_folder_id: int | None = None
                 for drive_id, meta in drive_files.items():
+                    if drive_id in chunk_ids:
+                        continue
                     if index.find_file_by_drive_id(account.id, drive_id) is not None:
                         continue
                     if recovered_folder_id is None:

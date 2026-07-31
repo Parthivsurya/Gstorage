@@ -30,17 +30,44 @@ class FileEntry:
     home_account_status: str | None
     drive_file_id: str | None
     md5: str | None
+    chunk_count: int
+    chunk_unavailable: int
     created_at: str
     modified_at: str
+
+    @property
+    def is_chunked(self) -> bool:
+        """True if the file is split into chunks across accounts (Phase B)."""
+        return self.chunk_count > 0
 
     @property
     def is_available(self) -> bool:
         """True if the file's bytes can currently be reached.
 
-        Requires a home account that still exists (not removed) and whose token
-        is not revoked. Unavailable files can't be downloaded until re-linked.
+        Chunked files need every chunk's account present and not revoked. Whole
+        files need their single home account present and not revoked. Unavailable
+        files can't be downloaded until the relevant account(s) are re-linked.
         """
+        if self.is_chunked:
+            return self.chunk_unavailable == 0
         return self.home_account_id is not None and self.home_account_status != "revoked"
+
+
+@dataclass(frozen=True)
+class Chunk:
+    id: int
+    file_id: int
+    sequence: int
+    account_id: int | None
+    account_email: str | None
+    account_status: str | None
+    drive_file_id: str | None
+    md5: str | None
+    size_bytes: int
+
+    @property
+    def is_available(self) -> bool:
+        return self.account_id is not None and self.account_status != "revoked"
 
 
 def _parent_clause(parent_id: int | None) -> tuple[str, tuple]:
@@ -119,7 +146,12 @@ class IndexStore:
         rows = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
             "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, f.created_at, "
+            "f.drive_file_id, f.md5, "
+            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
+            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
+            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
+            "AS chunk_unavailable, "
+            "f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             f"WHERE f.{clause} ORDER BY f.name COLLATE NOCASE",
@@ -148,7 +180,12 @@ class IndexStore:
         row = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
             "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, f.created_at, "
+            "f.drive_file_id, f.md5, "
+            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
+            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
+            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
+            "AS chunk_unavailable, "
+            "f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.id = ?",
@@ -160,7 +197,12 @@ class IndexStore:
         rows = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
             "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, f.created_at, "
+            "f.drive_file_id, f.md5, "
+            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
+            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
+            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
+            "AS chunk_unavailable, "
+            "f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.home_account_id = ?",
@@ -168,13 +210,34 @@ class IndexStore:
         ).fetchall()
         return [self._file(r) for r in rows]
 
+    def count_files_on_account(self, account_id: int) -> int:
+        """Files that would become unavailable if this account were removed.
+
+        Covers whole files homed on the account plus chunked files with any
+        chunk on it (removing the account orphans those chunks).
+        """
+        row = self.db.conn.execute(
+            "SELECT COUNT(*) AS c FROM ("
+            "  SELECT id FROM files WHERE home_account_id = ?"
+            "  UNION"
+            "  SELECT file_id FROM chunks WHERE account_id = ?"
+            ")",
+            (account_id, account_id),
+        ).fetchone()
+        return int(row["c"])
+
     def find_file_by_drive_id(
         self, account_id: int, drive_file_id: str
     ) -> FileEntry | None:
         row = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
             "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, f.created_at, "
+            "f.drive_file_id, f.md5, "
+            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
+            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
+            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
+            "AS chunk_unavailable, "
+            "f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.home_account_id = ? AND f.drive_file_id = ?",
@@ -196,7 +259,12 @@ class IndexStore:
             ") "
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
             "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, f.created_at, "
+            "f.drive_file_id, f.md5, "
+            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
+            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
+            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
+            "AS chunk_unavailable, "
+            "f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.parent_id IN (SELECT id FROM sub)",
@@ -214,6 +282,58 @@ class IndexStore:
     def delete_file(self, file_id: int) -> None:
         self.db.conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
         self.db.conn.commit()
+
+    # -- chunks ---------------------------------------------------------------
+
+    def add_chunk(
+        self,
+        file_id: int,
+        sequence: int,
+        account_id: int,
+        drive_file_id: str,
+        md5: str,
+        size_bytes: int,
+    ) -> None:
+        self.db.conn.execute(
+            "INSERT INTO chunks(file_id, sequence, account_id, drive_file_id, "
+            "md5, size_bytes) VALUES(?, ?, ?, ?, ?, ?)",
+            (file_id, sequence, account_id, drive_file_id, md5, size_bytes),
+        )
+        self.db.conn.commit()
+
+    def chunk_drive_ids(self, account_id: int) -> set[str]:
+        """Drive file ids of all chunks stored on an account (for reconcile)."""
+        rows = self.db.conn.execute(
+            "SELECT drive_file_id FROM chunks "
+            "WHERE account_id = ? AND drive_file_id IS NOT NULL",
+            (account_id,),
+        ).fetchall()
+        return {r["drive_file_id"] for r in rows}
+
+    def list_chunks(self, file_id: int) -> list[Chunk]:
+        """Every chunk of a file, in sequence order, with account health."""
+        rows = self.db.conn.execute(
+            "SELECT c.id, c.file_id, c.sequence, c.account_id, "
+            "a.email AS account_email, a.status AS account_status, "
+            "c.drive_file_id, c.md5, c.size_bytes FROM chunks c "
+            "LEFT JOIN accounts a ON a.id = c.account_id "
+            "WHERE c.file_id = ? ORDER BY c.sequence",
+            (file_id,),
+        ).fetchall()
+        return [
+            Chunk(
+                id=r["id"],
+                file_id=r["file_id"],
+                sequence=r["sequence"],
+                account_id=r["account_id"],
+                account_email=r["account_email"],
+                account_status=r["account_status"],
+                drive_file_id=r["drive_file_id"],
+                md5=r["md5"],
+                size_bytes=r["size_bytes"],
+            )
+            for r in rows
+        ]
 
     # -- row mapping ----------------------------------------------------------
 
@@ -238,6 +358,8 @@ class IndexStore:
             home_account_status=row["home_account_status"],
             drive_file_id=row["drive_file_id"],
             md5=row["md5"],
+            chunk_count=row["chunk_count"],
+            chunk_unavailable=row["chunk_unavailable"],
             created_at=row["created_at"],
             modified_at=row["modified_at"],
         )

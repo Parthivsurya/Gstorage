@@ -324,7 +324,7 @@ class StoragePanel(QWidget):
         row = self.account_list.itemWidget(item)
         email = row.email.text() if isinstance(row, AccountRow) else "this account"
 
-        hosted = len(self.index.list_files_for_account(account_id))
+        hosted = self.index.count_files_on_account(account_id)
         message = (
             f"Remove {email} from Gstore?\n\n"
             "This only unlinks it locally; nothing in Google Drive is deleted."

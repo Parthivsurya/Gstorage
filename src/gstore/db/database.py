@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -32,6 +32,9 @@ _MIGRATIONS: dict[int, list[str]] = {
         " created_at TEXT NOT NULL DEFAULT (datetime('now')))"
     ],
     5: ["ALTER TABLE accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"],
+    # chunks is empty in every pre-Phase-B DB (reserved, unused), so renaming
+    # the hash column to match the rest of the codebase is safe.
+    6: ["ALTER TABLE chunks RENAME COLUMN sha256 TO md5"],
 }
 
 

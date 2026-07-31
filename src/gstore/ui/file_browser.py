@@ -149,12 +149,15 @@ class FileBrowser(QWidget):
     def _file_label(self, entry: FileEntry) -> str:
         size = human_bytes(entry.size_bytes)
         if not entry.is_available:
-            reason = (
-                "needs re-link"
-                if entry.home_account_id is not None
-                else "home account removed"
-            )
+            if entry.is_chunked:
+                reason = "a part's account needs re-link"
+            elif entry.home_account_id is not None:
+                reason = "needs re-link"
+            else:
+                reason = "home account removed"
             return f"⚠  {entry.name}    {size} · unavailable ({reason})"
+        if entry.is_chunked:
+            return f"📄  {entry.name}    {size} · split into {entry.chunk_count} chunks"
         return f"📄  {entry.name}    {size} · {entry.home_account_email}"
 
     def _add_item(self, text: str, kind: str, item_id: int) -> None:
