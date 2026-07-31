@@ -75,6 +75,23 @@ CREATE TABLE IF NOT EXISTS uploads (
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Chunks already uploaded for an in-flight chunked upload, so an interrupted
+-- upload resumes from the first missing chunk instead of restarting. Keyed to
+-- the local file's identity (path + size + mtime); rows are cleared once the
+-- upload completes (chunks then live in `chunks`). Orphan cleanup in reconcile
+-- treats these drive files as protected while pending.
+CREATE TABLE IF NOT EXISTS pending_chunks (
+    local_path    TEXT NOT NULL,
+    size_bytes    INTEGER NOT NULL,
+    mtime_ns      INTEGER NOT NULL,
+    sequence      INTEGER NOT NULL,
+    account_id    INTEGER,
+    drive_file_id TEXT NOT NULL,
+    md5           TEXT NOT NULL,
+    chunk_size    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (local_path, sequence)
+);
+
 -- Pieces of a chunked file (Phase B), distributed across accounts when a file
 -- is too big for any single account's free space. A file is "chunked" when it
 -- has rows here; such files carry NULL home_account_id/drive_file_id, and the

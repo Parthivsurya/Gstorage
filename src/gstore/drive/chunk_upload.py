@@ -13,7 +13,7 @@ import hashlib
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -26,8 +26,16 @@ from gstore.drive.rate_limit import execute_with_backoff
 
 _UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024  # resumable transfer granularity per chunk
 
+# Marker in a chunk part-file's Drive name; reconcile uses it to spot orphans.
+PART_MARKER = ".gstore-part-"
+
 # Provides credentials for a given account id (cached by the caller).
 CredentialsFor = Callable[[int], Credentials]
+
+
+def part_name(base_name: str, sequence: int) -> str:
+    """Drive file name for one chunk of `base_name`."""
+    return f"{base_name}{PART_MARKER}{sequence:05d}"
 
 
 @dataclass(frozen=True)
@@ -37,6 +45,13 @@ class ChunkUploadResult:
     drive_file_id: str
     md5: str
     size_bytes: int
+
+
+class ChunkResume(Protocol):
+    """Records completed chunks so an interrupted upload can resume (worker-backed)."""
+
+    def completed(self) -> dict[int, ChunkUploadResult]: ...
+    def record(self, result: ChunkUploadResult) -> None: ...
 
 
 def _upload_bytes(credentials: Credentials, name: str, data: bytes) -> tuple[str, str]:
@@ -75,42 +90,58 @@ def upload_chunks(
     assignments: list[ChunkPlan],
     credentials_for: CredentialsFor,
     on_progress: Callable[[float], None] | None = None,
+    resume: ChunkResume | None = None,
 ) -> list[ChunkUploadResult]:
-    """Upload every chunk in `assignments`; return their results in order.
+    """Upload the chunks in `assignments`; return all chunk results in order.
 
-    On any failure, deletes the chunks already uploaded (best effort) and
-    re-raises, so no partial remnants remain.
+    `assignments` holds only the chunks still to upload — already-completed ones
+    come from `resume` (when given). Each completed chunk is recorded via
+    `resume` so an interruption resumes from the next missing chunk.
+
+    Cleanup on failure depends on resumability: with a `resume` store the
+    already-uploaded chunks are kept (staged for the retry); without one they
+    are deleted so no orphans remain.
     """
     path = Path(local_path)
     ordered = sorted(assignments, key=lambda p: p.sequence)
-    total = sum(p.length for p in ordered) or 1
-    done_bytes = 0
-    uploaded: list[ChunkUploadResult] = []
+    already = resume.completed() if resume is not None else {}
+
+    total = (
+        sum(p.length for p in ordered) + sum(r.size_bytes for r in already.values())
+    ) or 1
+    done_bytes = sum(r.size_bytes for r in already.values())
+    results: list[ChunkUploadResult] = list(already.values())
+    uploaded_this_run: list[ChunkUploadResult] = []
 
     try:
         with open(path, "rb") as fh:
             for plan in ordered:
                 fh.seek(plan.offset)
                 data = fh.read(plan.length)
-                name = f"{path.name}.gstore-part-{plan.sequence:05d}"
                 drive_id, md5 = _upload_bytes(
-                    credentials_for(plan.account_id), name, data
+                    credentials_for(plan.account_id),
+                    part_name(path.name, plan.sequence),
+                    data,
                 )
-                uploaded.append(
-                    ChunkUploadResult(
-                        sequence=plan.sequence,
-                        account_id=plan.account_id,
-                        drive_file_id=drive_id,
-                        md5=md5,
-                        size_bytes=len(data),
-                    )
+                result = ChunkUploadResult(
+                    sequence=plan.sequence,
+                    account_id=plan.account_id,
+                    drive_file_id=drive_id,
+                    md5=md5,
+                    size_bytes=len(data),
                 )
+                if resume is not None:
+                    resume.record(result)  # staged: survives an interruption
+                else:
+                    uploaded_this_run.append(result)
+                results.append(result)
                 done_bytes += len(data)
                 if on_progress is not None:
                     on_progress(done_bytes / total)
-        return uploaded
+        return sorted(results, key=lambda r: r.sequence)
     except Exception:
-        for result in uploaded:
+        # Only non-resumable uploads clean up; resumable ones keep staged chunks.
+        for result in uploaded_this_run:
             try:
                 delete_drive_file(
                     credentials_for(result.account_id), result.drive_file_id

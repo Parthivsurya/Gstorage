@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -35,6 +35,18 @@ _MIGRATIONS: dict[int, list[str]] = {
     # chunks is empty in every pre-Phase-B DB (reserved, unused), so renaming
     # the hash column to match the rest of the codebase is safe.
     6: ["ALTER TABLE chunks RENAME COLUMN sha256 TO md5"],
+    7: [
+        "CREATE TABLE IF NOT EXISTS pending_chunks ("
+        " local_path TEXT NOT NULL,"
+        " size_bytes INTEGER NOT NULL,"
+        " mtime_ns INTEGER NOT NULL,"
+        " sequence INTEGER NOT NULL,"
+        " account_id INTEGER,"
+        " drive_file_id TEXT NOT NULL,"
+        " md5 TEXT NOT NULL,"
+        " chunk_size INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY (local_path, sequence))"
+    ],
 }
 
 

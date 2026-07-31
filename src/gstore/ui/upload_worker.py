@@ -15,15 +15,58 @@ from PySide6.QtCore import QThread, Signal
 
 from gstore.auth.accounts import AccountStore
 from gstore.db import Database
-from gstore.drive.chunk_upload import upload_chunks
+from gstore.drive.chunk_upload import ChunkUploadResult, upload_chunks
 from gstore.drive.hashing import md5_of_file
-from gstore.drive.placement import choose_account, plan_chunk_placement
+from gstore.drive.placement import CHUNK_SIZE, choose_account, plan_missing_chunks
 from gstore.drive.quota import fetch_storage_quota
 from gstore.drive.upload import upload_file
 from gstore.index import IndexStore
+from gstore.index.pending_chunks import PendingChunks
 from gstore.index.uploads import DbUploadSession, UploadSessions
 
 _REVOKED_HINT = "Re-link it in the Storage tab, then retry."
+
+
+class _ChunkResume:
+    """Adapts PendingChunks to the resume interface upload_chunks expects.
+
+    Bridges the DB-only pending store and the drive layer's ChunkUploadResult,
+    so neither has to know about the other.
+    """
+
+    def __init__(self, pending: PendingChunks, local_path: str, size: int, mtime: int):
+        self._pending = pending
+        self._path = local_path
+        self._size = size
+        self._mtime = mtime
+        pending.reset_if_changed(local_path, size, mtime)
+
+    def completed(self) -> dict[int, ChunkUploadResult]:
+        return {
+            row["sequence"]: ChunkUploadResult(
+                sequence=row["sequence"],
+                account_id=row["account_id"],
+                drive_file_id=row["drive_file_id"],
+                md5=row["md5"],
+                size_bytes=row["size_bytes"],
+            )
+            for row in self._pending.completed(self._path, self._size, self._mtime)
+        }
+
+    def record(self, result: ChunkUploadResult) -> None:
+        self._pending.record(
+            self._path,
+            self._size,
+            self._mtime,
+            result.sequence,
+            result.account_id,
+            result.drive_file_id,
+            result.md5,
+            result.size_bytes,
+        )
+
+    def clear(self) -> None:
+        self._pending.clear(self._path)
 
 
 class UploadWorker(QThread):
@@ -41,6 +84,7 @@ class UploadWorker(QThread):
         accounts = AccountStore(db)
         index = IndexStore(db)
         sessions = UploadSessions(db)
+        pending = PendingChunks(db)
         try:
             account_list = accounts.list_accounts()
             if not account_list:
@@ -76,7 +120,9 @@ class UploadWorker(QThread):
                 target = choose_account(fresh, size)
                 if target is None:
                     # No single account fits — split across several.
-                    self._upload_chunked(accounts, index, fresh, size)
+                    self._upload_chunked(
+                        accounts, index, pending, fresh, size, mtime_ns, path_key
+                    )
                     return
 
             self._upload_whole(
@@ -126,8 +172,15 @@ class UploadWorker(QThread):
 
     # -- chunked --------------------------------------------------------------
 
-    def _upload_chunked(self, accounts, index, candidates, size) -> None:
-        assignments = plan_chunk_placement(candidates, size)
+    def _upload_chunked(
+        self, accounts, index, pending, candidates, size, mtime_ns, path_key
+    ) -> None:
+        resume = _ChunkResume(pending, path_key, size, mtime_ns)
+        completed = resume.completed()
+        # Plan only the chunks not already uploaded (resume-aware).
+        assignments = plan_missing_chunks(
+            candidates, size, set(completed), CHUNK_SIZE
+        )
         if assignments is None:
             self.failed.emit(
                 "No combination of linked accounts has enough free space "
@@ -151,11 +204,13 @@ class UploadWorker(QThread):
                 assignments,
                 credentials_for,
                 on_progress=self.progress.emit,
+                resume=resume,
             )
         except RefreshError:
+            # Uploaded chunks are staged; the next attempt resumes from them.
             self.failed.emit(
-                "An account this file was being split across was revoked or "
-                f"expired; the partial upload was cleaned up. {_REVOKED_HINT}"
+                "An account this file is being split across was revoked or "
+                f"expired. Uploaded chunks were kept to resume. {_REVOKED_HINT}"
             )
             return
 
@@ -171,6 +226,7 @@ class UploadWorker(QThread):
                 result.md5,
                 result.size_bytes,
             )
+        resume.clear()  # staged chunks now live in `chunks`
 
         involved = {r.account_id for r in results}
         for account_id in involved:

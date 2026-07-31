@@ -51,15 +51,25 @@ class ChunkPlan:
     account_id: int
 
 
-def plan_chunk_placement(
-    accounts: list[Account], size_bytes: int, chunk_size: int = CHUNK_SIZE
-) -> list[ChunkPlan] | None:
-    """Distribute a `size_bytes` file across accounts as chunks, or None.
+def chunk_ranges(size_bytes: int, chunk_size: int = CHUNK_SIZE) -> list[tuple[int, int, int]]:
+    """Canonical (sequence, offset, length) split of a file — order-stable."""
+    ranges: list[tuple[int, int, int]] = []
+    offset = 0
+    sequence = 0
+    while offset < size_bytes:
+        length = min(chunk_size, size_bytes - offset)
+        ranges.append((sequence, offset, length))
+        offset += length
+        sequence += 1
+    return ranges
 
-    Greedy most-free-first: each chunk goes to the synced account with the most
-    remaining free space that still fits it, decrementing as we go. Returns None
-    if any chunk can't be placed (combined free space is insufficient).
-    """
+
+def _assign(
+    ranges: list[tuple[int, int, int]], accounts: list[Account]
+) -> list[ChunkPlan] | None:
+    """Greedy most-free-first assignment of chunk ranges to accounts, or None."""
+    if not ranges:
+        return []
     synced = [a for a in accounts if a.quota_synced_at is not None]
     if not synced:
         return None
@@ -71,10 +81,7 @@ def plan_chunk_placement(
         remaining[account.id] = float("inf") if fb is None else float(fb)
 
     plans: list[ChunkPlan] = []
-    offset = 0
-    sequence = 0
-    while offset < size_bytes:
-        length = min(chunk_size, size_bytes - offset)
+    for sequence, offset, length in ranges:
         candidate = max(
             (a for a in synced if remaining[a.id] >= length),
             key=lambda a: remaining[a.id],
@@ -84,6 +91,27 @@ def plan_chunk_placement(
             return None  # nowhere left with room for this chunk
         plans.append(ChunkPlan(sequence, offset, length, candidate.id))
         remaining[candidate.id] -= length
-        offset += length
-        sequence += 1
     return plans
+
+
+def plan_chunk_placement(
+    accounts: list[Account], size_bytes: int, chunk_size: int = CHUNK_SIZE
+) -> list[ChunkPlan] | None:
+    """Distribute a whole `size_bytes` file across accounts as chunks, or None."""
+    return _assign(chunk_ranges(size_bytes, chunk_size), accounts)
+
+
+def plan_missing_chunks(
+    accounts: list[Account],
+    size_bytes: int,
+    completed_sequences: set[int],
+    chunk_size: int = CHUNK_SIZE,
+) -> list[ChunkPlan] | None:
+    """Place only the chunks not already uploaded (for resume), or None.
+
+    Returns [] when every chunk is already done. Planning only the missing
+    ranges keeps placement honest: the completed chunks' space is already
+    consumed and reflected in refreshed quotas.
+    """
+    missing = [r for r in chunk_ranges(size_bytes, chunk_size) if r[0] not in completed_sequences]
+    return _assign(missing, accounts)

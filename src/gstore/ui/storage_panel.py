@@ -268,12 +268,15 @@ class StoragePanel(QWidget):
         worker.start()
 
     def _on_reconcile_summary(
-        self, checked: int, pruned: int, recovered: int
+        self, checked: int, pruned: int, recovered: int, orphans: int
     ) -> None:
-        self.status.setText(
+        summary = (
             f"Re-synced {checked} account(s): "
             f"{pruned} pruned, {recovered} recovered."
         )
+        if orphans:
+            summary += f" {orphans} orphaned chunk(s) cleaned."
+        self.status.setText(summary)
         if pruned or recovered:
             self.index_changed.emit()
 
