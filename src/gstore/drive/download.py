@@ -1,7 +1,9 @@
 """Stream a Drive file to local disk.
 
 Downloads in chunks straight to the destination file — no full in-memory buffer.
-Progress is reported per chunk.
+Progress is reported per chunk. When the index holds a checksum for the file the
+download is verified against it, so a truncated or corrupted transfer fails
+loudly instead of leaving bad data on disk.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
+from gstore.drive.hashing import IntegrityError, verify_file
 from gstore.drive.rate_limit import execute_with_backoff
 
 _CHUNK_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -23,8 +26,13 @@ def download_file(
     drive_file_id: str,
     dest_path: str | Path,
     on_progress: Callable[[float], None] | None = None,
+    expected_md5: str | None = None,
 ) -> Path:
-    """Download `drive_file_id` to `dest_path`; returns the written path."""
+    """Download `drive_file_id` to `dest_path`; returns the written path.
+
+    If `expected_md5` is given, the written file is checksum-verified; on
+    mismatch the corrupt file is removed and :class:`IntegrityError` is raised.
+    """
     dest = Path(dest_path)
     service = build("drive", "v3", credentials=credentials, cache_discovery=False)
     request = service.files().get_media(fileId=drive_file_id)
@@ -36,6 +44,13 @@ def download_file(
             status, done = execute_with_backoff(downloader.next_chunk)
             if status is not None and on_progress is not None:
                 on_progress(status.progress())
+
+    if expected_md5:
+        try:
+            verify_file(dest, expected_md5)
+        except IntegrityError:
+            dest.unlink(missing_ok=True)  # don't leave corrupt data behind
+            raise
 
     if on_progress is not None:
         on_progress(1.0)

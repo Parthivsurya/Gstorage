@@ -48,6 +48,7 @@ class DownloadWorker(QThread):
                 entry.drive_file_id,
                 self.dest_path,
                 on_progress=self.progress.emit,
+                expected_md5=entry.md5,
             )
             self.succeeded.emit(self.dest_path)
         except Exception as exc:

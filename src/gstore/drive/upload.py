@@ -18,14 +18,12 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from gstore.drive.delete import delete_drive_file
-from gstore.drive.hashing import md5_of_file
+from gstore.drive.hashing import IntegrityError, md5_of_file
 from gstore.drive.rate_limit import execute_with_backoff
 
 _CHUNK_BYTES = 5 * 1024 * 1024  # 5 MB resumable chunks
 
-
-class IntegrityError(RuntimeError):
-    """Raised when an uploaded file's checksum doesn't match the local file."""
+__all__ = ["IntegrityError", "UploadResult", "upload_file"]
 
 
 @dataclass(frozen=True)
