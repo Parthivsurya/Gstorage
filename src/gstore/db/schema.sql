@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     quota_limit_bytes  INTEGER,
     quota_used_bytes   INTEGER,
     quota_synced_at    TEXT,
+    -- 'active' or 'revoked'. Set to 'revoked' when a token refresh fails so
+    -- the UI can flag it and its files; re-linking resets it to 'active'.
+    -- The row (and its files) is kept on revoke so re-link restores access.
+    status             TEXT NOT NULL DEFAULT 'active',
     created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

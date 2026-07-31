@@ -147,8 +147,15 @@ class FileBrowser(QWidget):
         self.empty_hint.setVisible(not folders and not files)
 
     def _file_label(self, entry: FileEntry) -> str:
-        where = entry.home_account_email or "unassigned"
-        return f"📄  {entry.name}    {human_bytes(entry.size_bytes)} · {where}"
+        size = human_bytes(entry.size_bytes)
+        if not entry.is_available:
+            reason = (
+                "needs re-link"
+                if entry.home_account_id is not None
+                else "home account removed"
+            )
+            return f"⚠  {entry.name}    {size} · unavailable ({reason})"
+        return f"📄  {entry.name}    {size} · {entry.home_account_email}"
 
     def _add_item(self, text: str, kind: str, item_id: int) -> None:
         item = QListWidgetItem(text)
@@ -176,8 +183,17 @@ class FileBrowser(QWidget):
         selection = self._selected()
         is_file = selection is not None and selection[0] == _FILE
         busy = self._busy()
+
+        # Downloading needs the bytes; block it for files whose home account is
+        # removed or revoked. Rename/delete stay allowed (index-only + best-effort
+        # Drive delete), so unavailable files aren't stuck in the browser.
+        downloadable = False
+        if is_file:
+            entry = self.index.get_file(selection[1])
+            downloadable = entry is not None and entry.is_available
+
         self.upload_button.setEnabled(not busy)
-        self.download_button.setEnabled(is_file and not busy)
+        self.download_button.setEnabled(downloadable and not busy)
         self.rename_button.setEnabled(selection is not None and not busy)
         self.delete_button.setEnabled(selection is not None and not busy)
 

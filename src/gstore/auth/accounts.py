@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
@@ -25,7 +26,12 @@ class Account:
     quota_limit_bytes: int | None
     quota_used_bytes: int | None
     quota_synced_at: str | None
+    status: str
     created_at: str
+
+    @property
+    def is_revoked(self) -> bool:
+        return self.status == "revoked"
 
 
 class AccountStore:
@@ -33,12 +39,17 @@ class AccountStore:
         self.db = db
 
     def add_account(self, credentials: Credentials, email: str) -> int:
-        """Store (or re-link) an account by email; returns its row id."""
+        """Store (or re-link) an account by email; returns its row id.
+
+        Re-linking a previously revoked account resets its status to 'active',
+        which restores access to all of that account's existing files.
+        """
         blob = keystore.encrypt(credentials.to_json().encode("utf-8"))
         self.db.conn.execute(
             "INSERT INTO accounts(email, token_ref, token_blob) VALUES(?, ?, ?) "
             "ON CONFLICT(email) DO UPDATE SET "
-            "token_ref = excluded.token_ref, token_blob = excluded.token_blob",
+            "token_ref = excluded.token_ref, token_blob = excluded.token_blob, "
+            "status = 'active'",
             (email, keystore.MASTER_KEY_NAME, blob),
         )
         self.db.conn.commit()
@@ -50,7 +61,7 @@ class AccountStore:
     def list_accounts(self) -> list[Account]:
         rows = self.db.conn.execute(
             "SELECT id, email, quota_limit_bytes, quota_used_bytes, "
-            "quota_synced_at, created_at FROM accounts ORDER BY created_at, id"
+            "quota_synced_at, status, created_at FROM accounts ORDER BY created_at, id"
         ).fetchall()
         return [
             Account(
@@ -59,10 +70,18 @@ class AccountStore:
                 quota_limit_bytes=r["quota_limit_bytes"],
                 quota_used_bytes=r["quota_used_bytes"],
                 quota_synced_at=r["quota_synced_at"],
+                status=r["status"],
                 created_at=r["created_at"],
             )
             for r in rows
         ]
+
+    def set_status(self, account_id: int, status: str) -> None:
+        """Update an account's health status ('active' | 'revoked')."""
+        self.db.conn.execute(
+            "UPDATE accounts SET status = ? WHERE id = ?", (status, account_id)
+        )
+        self.db.conn.commit()
 
     def count(self) -> int:
         return int(
@@ -83,7 +102,14 @@ class AccountStore:
         credentials = Credentials.from_authorized_user_info(info, scopes=SCOPES)
 
         if not credentials.valid:
-            credentials.refresh(Request())
+            try:
+                credentials.refresh(Request())
+            except RefreshError:
+                # Token revoked or expired (not a transient network error, which
+                # raises TransportError). Flag the account so its files show as
+                # unavailable until the user re-links it.
+                self.set_status(account_id, "revoked")
+                raise
             self._persist_credentials(account_id, credentials)
 
         return credentials

@@ -25,6 +25,7 @@ from gstore.auth.accounts import AccountStore
 from gstore.db import Database
 from gstore.drive.quota import aggregate
 from gstore.format import human_bytes
+from gstore.index import IndexStore
 from gstore.ui.account_row import AccountRow
 from gstore.ui.login_worker import LoginWorker
 from gstore.ui.quota_worker import QuotaWorker
@@ -41,6 +42,7 @@ class StoragePanel(QWidget):
         super().__init__()
         self.db = db
         self.accounts = AccountStore(db)
+        self.index = IndexStore(db)
         self._login_worker: LoginWorker | None = None
         self._quota_worker: QuotaWorker | None = None
         self._reconcile_worker: ReconcileWorker | None = None
@@ -213,6 +215,10 @@ class StoragePanel(QWidget):
 
     def _on_quota_failed(self, account_id: int, message: str) -> None:
         self._quota_errors.append(f"account {account_id}: {message}")
+        # get_credentials may have just flagged this account revoked; re-render
+        # so its row (and any dependent files) show the unavailable state.
+        self._refresh_dashboard()
+        self.index_changed.emit()
 
     def _on_quota_finished(self) -> None:
         self._quota_worker = None
@@ -295,16 +301,27 @@ class StoragePanel(QWidget):
         item = self.account_list.currentItem()
         if item is None:
             return
-        account_id = item.data(Qt.ItemDataRole.UserRole)
+        account_id = int(item.data(Qt.ItemDataRole.UserRole))
         row = self.account_list.itemWidget(item)
         email = row.email.text() if isinstance(row, AccountRow) else "this account"
-        confirm = QMessageBox.question(
-            self,
-            "Remove account",
+
+        hosted = len(self.index.list_files_for_account(account_id))
+        message = (
             f"Remove {email} from Gstore?\n\n"
-            "This only unlinks it locally; nothing in Google Drive is deleted.",
+            "This only unlinks it locally; nothing in Google Drive is deleted."
         )
+        if hosted:
+            # Removal orphans these files: without the account's token their bytes
+            # can't be reached. Re-linking instead keeps them accessible.
+            message += (
+                f"\n\n⚠ {hosted} file(s) live on this account and will become "
+                "unavailable in Gstore. To keep access, re-link the account "
+                "instead of removing it."
+            )
+        confirm = QMessageBox.question(self, "Remove account", message)
         if confirm == QMessageBox.StandardButton.Yes:
-            self.accounts.remove_account(int(account_id))
+            self.accounts.remove_account(account_id)
             self._refresh_dashboard()
             self.accounts_changed.emit()
+            if hosted:
+                self.index_changed.emit()  # files just became unavailable

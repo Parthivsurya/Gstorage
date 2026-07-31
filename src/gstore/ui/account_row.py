@@ -35,6 +35,18 @@ class AccountRow(QWidget):
     def set_account(self, account: Account) -> None:
         self.email.setText(account.email)
 
+        if account.is_revoked:
+            self.email.setStyleSheet("font-weight: 600; color: #d06666;")
+            self.bar.setRange(0, 100)
+            self.bar.setValue(0)
+            self.detail.setText(
+                "⚠ needs re-link — click “Add Google account” and sign in again "
+                "to restore access to its files"
+            )
+            return
+
+        self.email.setStyleSheet("font-weight: 600;")
+
         if account.quota_synced_at is None:
             self.bar.setRange(0, 0)  # indeterminate: not fetched yet
             self.detail.setText("syncing…")

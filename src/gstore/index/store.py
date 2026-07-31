@@ -27,10 +27,20 @@ class FileEntry:
     size_bytes: int
     home_account_id: int | None
     home_account_email: str | None
+    home_account_status: str | None
     drive_file_id: str | None
     md5: str | None
     created_at: str
     modified_at: str
+
+    @property
+    def is_available(self) -> bool:
+        """True if the file's bytes can currently be reached.
+
+        Requires a home account that still exists (not removed) and whose token
+        is not revoked. Unavailable files can't be downloaded until re-linked.
+        """
+        return self.home_account_id is not None and self.home_account_status != "revoked"
 
 
 def _parent_clause(parent_id: int | None) -> tuple[str, tuple]:
@@ -108,7 +118,8 @@ class IndexStore:
         clause, params = _parent_clause(parent_id)
         rows = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
+            "a.email AS home_account_email, a.status AS home_account_status, "
+            "f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             f"WHERE f.{clause} ORDER BY f.name COLLATE NOCASE",
@@ -136,7 +147,8 @@ class IndexStore:
     def get_file(self, file_id: int) -> FileEntry | None:
         row = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
+            "a.email AS home_account_email, a.status AS home_account_status, "
+            "f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.id = ?",
@@ -147,7 +159,8 @@ class IndexStore:
     def list_files_for_account(self, account_id: int) -> list[FileEntry]:
         rows = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
+            "a.email AS home_account_email, a.status AS home_account_status, "
+            "f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.home_account_id = ?",
@@ -160,7 +173,8 @@ class IndexStore:
     ) -> FileEntry | None:
         row = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
+            "a.email AS home_account_email, a.status AS home_account_status, "
+            "f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.home_account_id = ? AND f.drive_file_id = ?",
@@ -181,7 +195,8 @@ class IndexStore:
             "  SELECT f.id FROM folders f JOIN sub s ON f.parent_id = s.id"
             ") "
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
+            "a.email AS home_account_email, a.status AS home_account_status, "
+            "f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.parent_id IN (SELECT id FROM sub)",
@@ -220,6 +235,7 @@ class IndexStore:
             size_bytes=row["size_bytes"],
             home_account_id=row["home_account_id"],
             home_account_email=row["home_account_email"],
+            home_account_status=row["home_account_status"],
             drive_file_id=row["drive_file_id"],
             md5=row["md5"],
             created_at=row["created_at"],

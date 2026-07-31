@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -31,6 +31,7 @@ _MIGRATIONS: dict[int, list[str]] = {
         " resumable_uri TEXT NOT NULL,"
         " created_at TEXT NOT NULL DEFAULT (datetime('now')))"
     ],
+    5: ["ALTER TABLE accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"],
 }
 
 
