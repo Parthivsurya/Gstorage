@@ -15,7 +15,7 @@ from gstore.drive.rate_limit import execute_with_backoff
 
 
 def list_app_files(credentials: Credentials) -> dict[str, dict]:
-    """Return {drive_file_id: {id, name, size}} for all non-trashed app files."""
+    """Return {drive_file_id: {id, name, size, md5Checksum}} for app files."""
     service = build("drive", "v3", credentials=credentials, cache_discovery=False)
     files: dict[str, dict] = {}
     page_token: str | None = None
@@ -25,7 +25,7 @@ def list_app_files(credentials: Credentials) -> dict[str, dict]:
             .list(
                 q="trashed=false",
                 spaces="drive",
-                fields="nextPageToken, files(id, name, size)",
+                fields="nextPageToken, files(id, name, size, md5Checksum)",
                 pageSize=1000,
                 pageToken=token,
             )

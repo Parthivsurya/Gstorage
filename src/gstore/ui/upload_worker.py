@@ -57,11 +57,16 @@ class UploadWorker(QThread):
                 return
 
             credentials = accounts.get_credentials(target.id)
-            drive_id, real_size = upload_file(
+            result = upload_file(
                 credentials, self.local_path, on_progress=self.progress.emit
             )
             index.create_file(
-                self.local_path.name, self.parent_id, real_size, target.id, drive_id
+                self.local_path.name,
+                self.parent_id,
+                result.size_bytes,
+                target.id,
+                result.drive_file_id,
+                md5=result.md5,
             )
 
             # Reflect the new usage on the chosen account.

@@ -28,6 +28,7 @@ class FileEntry:
     home_account_id: int | None
     home_account_email: str | None
     drive_file_id: str | None
+    md5: str | None
     created_at: str
     modified_at: str
 
@@ -107,7 +108,7 @@ class IndexStore:
         clause, params = _parent_clause(parent_id)
         rows = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.created_at, "
+            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             f"WHERE f.{clause} ORDER BY f.name COLLATE NOCASE",
@@ -122,11 +123,12 @@ class IndexStore:
         size_bytes: int,
         home_account_id: int | None,
         drive_file_id: str | None,
+        md5: str | None = None,
     ) -> int:
         cur = self.db.conn.execute(
             "INSERT INTO files(name, parent_id, size_bytes, home_account_id, "
-            "drive_file_id) VALUES(?, ?, ?, ?, ?)",
-            (name, parent_id, size_bytes, home_account_id, drive_file_id),
+            "drive_file_id, md5) VALUES(?, ?, ?, ?, ?, ?)",
+            (name, parent_id, size_bytes, home_account_id, drive_file_id, md5),
         )
         self.db.conn.commit()
         return int(cur.lastrowid)
@@ -134,7 +136,7 @@ class IndexStore:
     def get_file(self, file_id: int) -> FileEntry | None:
         row = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.created_at, "
+            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.id = ?",
@@ -145,7 +147,7 @@ class IndexStore:
     def list_files_for_account(self, account_id: int) -> list[FileEntry]:
         rows = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.created_at, "
+            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.home_account_id = ?",
@@ -158,7 +160,7 @@ class IndexStore:
     ) -> FileEntry | None:
         row = self.db.conn.execute(
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.created_at, "
+            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.home_account_id = ? AND f.drive_file_id = ?",
@@ -179,7 +181,7 @@ class IndexStore:
             "  SELECT f.id FROM folders f JOIN sub s ON f.parent_id = s.id"
             ") "
             "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, f.drive_file_id, f.created_at, "
+            "a.email AS home_account_email, f.drive_file_id, f.md5, f.created_at, "
             "f.modified_at FROM files f "
             "LEFT JOIN accounts a ON a.id = f.home_account_id "
             "WHERE f.parent_id IN (SELECT id FROM sub)",
@@ -219,6 +221,7 @@ class IndexStore:
             home_account_id=row["home_account_id"],
             home_account_email=row["home_account_email"],
             drive_file_id=row["drive_file_id"],
+            md5=row["md5"],
             created_at=row["created_at"],
             modified_at=row["modified_at"],
         )

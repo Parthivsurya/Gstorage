@@ -58,6 +58,7 @@ class ReconcileWorker(QThread):
                         int(meta.get("size") or 0),
                         account.id,
                         drive_id,
+                        md5=meta.get("md5Checksum"),
                     )
                     recovered += 1
 

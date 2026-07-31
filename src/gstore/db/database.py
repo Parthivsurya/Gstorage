@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -20,6 +20,7 @@ _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 # run when upgrading an existing DB. Keyed by the version they bring the DB to.
 _MIGRATIONS: dict[int, list[str]] = {
     2: ["ALTER TABLE accounts ADD COLUMN token_blob BLOB"],
+    3: ["ALTER TABLE files ADD COLUMN md5 TEXT"],
 }
 
 

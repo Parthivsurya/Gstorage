@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS files (
     home_account_id   INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
     -- Real Drive file id on the home account (NULL until upload succeeds).
     drive_file_id     TEXT,
+    -- MD5 of the content, verified against Drive's md5Checksum at upload time.
+    -- Lets reconcile detect silent corruption and download confirm integrity.
+    md5               TEXT,
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     modified_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
