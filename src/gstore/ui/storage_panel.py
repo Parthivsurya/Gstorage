@@ -6,9 +6,12 @@ accounts shown here.
 
 from __future__ import annotations
 
+from datetime import date
+
 from google.oauth2.credentials import Credentials
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -26,6 +29,7 @@ from gstore.db import Database
 from gstore.drive.quota import aggregate
 from gstore.format import human_bytes
 from gstore.index import IndexStore
+from gstore.index.backup import InvalidBackup, export_index, import_index
 from gstore.ui.account_row import AccountRow
 from gstore.ui.login_worker import LoginWorker
 from gstore.ui.quota_worker import QuotaWorker
@@ -120,11 +124,26 @@ class StoragePanel(QWidget):
         )
         self.repair_button.clicked.connect(self._start_reconcile)
 
+        self.backup_button = QPushButton("Back up index…")
+        self.backup_button.setToolTip(
+            "Save a snapshot of the local index — the only map of which account "
+            "each file lives on — to a file you can restore later."
+        )
+        self.backup_button.clicked.connect(self._on_backup_clicked)
+
+        self.restore_button = QPushButton("Restore index…")
+        self.restore_button.setToolTip(
+            "Replace the current index with a previously saved backup."
+        )
+        self.restore_button.clicked.connect(self._on_restore_clicked)
+
         self.button_row = QHBoxLayout()
         self.button_row.addWidget(self.add_button)
         self.button_row.addWidget(self.remove_button)
         self.button_row.addWidget(self.refresh_button)
         self.button_row.addWidget(self.repair_button)
+        self.button_row.addWidget(self.backup_button)
+        self.button_row.addWidget(self.restore_button)
         self.button_row.addStretch()
 
     # -- rendering ------------------------------------------------------------
@@ -325,3 +344,53 @@ class StoragePanel(QWidget):
             self.accounts_changed.emit()
             if hosted:
                 self.index_changed.emit()  # files just became unavailable
+
+    # -- backup / restore -----------------------------------------------------
+
+    def _on_backup_clicked(self) -> None:
+        default_name = f"gstore-index-{date.today().isoformat()}.db"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Back up index", default_name, "Gstore index (*.db)"
+        )
+        if not path:
+            return
+        try:
+            export_index(self.db, path)
+        except Exception as exc:  # disk full, bad path, etc.
+            QMessageBox.warning(self, "Backup failed", str(exc))
+            self.status.setText("Backup failed")
+            return
+        self.status.setText(f"Index backed up to {path}")
+
+    def _on_restore_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Restore index", "", "Gstore index (*.db);;All files (*)"
+        )
+        if not path:
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Restore index",
+            "Replace the current index with this backup?\n\n"
+            "Your present index (folders, file locations, linked accounts) will "
+            "be overwritten. Nothing in Google Drive is changed.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            import_index(self.db, path)
+        except InvalidBackup as exc:
+            QMessageBox.warning(self, "Restore failed", str(exc))
+            self.status.setText("Restore failed")
+            return
+        except Exception as exc:
+            QMessageBox.warning(self, "Restore failed", str(exc))
+            self.status.setText("Restore failed")
+            return
+        # The whole index changed underneath both tabs; make them re-read.
+        self.status.setText("Index restored")
+        self._refresh_dashboard()
+        self.accounts_changed.emit()
+        self.index_changed.emit()
+        if self.accounts.count() > 0:
+            self._start_quota_refresh()
