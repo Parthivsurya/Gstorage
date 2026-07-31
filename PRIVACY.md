@@ -66,4 +66,4 @@ tokens from your device.
 
 ## Contact
 
-Questions about this policy: **sivaparthivkb@gmail.com**
+Questions about this policy: **parthivsuryakb@gmail.com**
