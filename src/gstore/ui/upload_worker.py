@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from PySide6.QtCore import QThread, Signal
 
 from gstore.auth.accounts import AccountStore
@@ -17,6 +18,7 @@ from gstore.drive.placement import choose_account
 from gstore.drive.quota import fetch_storage_quota
 from gstore.drive.upload import upload_file
 from gstore.index import IndexStore
+from gstore.index.uploads import DbUploadSession, UploadSessions
 
 
 class UploadWorker(QThread):
@@ -33,32 +35,60 @@ class UploadWorker(QThread):
         db = Database().open()
         accounts = AccountStore(db)
         index = IndexStore(db)
+        sessions = UploadSessions(db)
         try:
-            if not accounts.list_accounts():
+            account_list = accounts.list_accounts()
+            if not account_list:
                 self.failed.emit("Link a Google account first (Storage tab).")
                 return
 
-            size = self.local_path.stat().st_size
+            stat = self.local_path.stat()
+            size, mtime_ns = stat.st_size, stat.st_mtime_ns
+            path_key = str(self.local_path)
 
-            # Refresh quotas so placement reflects real free space.
-            for account in accounts.list_accounts():
-                try:
-                    creds = accounts.get_credentials(account.id)
-                    quota = fetch_storage_quota(creds)
-                    accounts.update_quota(account.id, quota.limit_bytes, quota.used_bytes)
-                except Exception:
-                    pass  # unreachable account is simply skipped for placement
+            # Resume an interrupted upload on its original account if one exists
+            # and the file is unchanged; otherwise place the file fresh.
+            target = None
+            resume = sessions.find(path_key, size, mtime_ns)
+            if resume is not None:
+                target = next((a for a in account_list if a.id == resume[0]), None)
+                if target is None:
+                    sessions.clear(path_key)  # home account is gone
 
-            target = choose_account(accounts.list_accounts(), size)
             if target is None:
+                # Refresh quotas so placement reflects real free space.
+                for account in account_list:
+                    try:
+                        creds = accounts.get_credentials(account.id)
+                        quota = fetch_storage_quota(creds)
+                        accounts.update_quota(
+                            account.id, quota.limit_bytes, quota.used_bytes
+                        )
+                    except Exception:
+                        pass  # unreachable account is skipped for placement
+
+                target = choose_account(accounts.list_accounts(), size)
+                if target is None:
+                    self.failed.emit(
+                        "No linked account has enough free space for this file."
+                    )
+                    return
+
+            try:
+                credentials = accounts.get_credentials(target.id)
+            except RefreshError:
                 self.failed.emit(
-                    "No linked account has enough free space for this file."
+                    f"Access to {target.email} was revoked or expired. "
+                    "Re-link it in the Storage tab, then retry."
                 )
                 return
 
-            credentials = accounts.get_credentials(target.id)
+            session = DbUploadSession(sessions, target.id, path_key, size, mtime_ns)
             result = upload_file(
-                credentials, self.local_path, on_progress=self.progress.emit
+                credentials,
+                self.local_path,
+                on_progress=self.progress.emit,
+                session=session,
             )
             index.create_file(
                 self.local_path.name,

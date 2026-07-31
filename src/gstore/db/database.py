@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -21,6 +21,16 @@ _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 _MIGRATIONS: dict[int, list[str]] = {
     2: ["ALTER TABLE accounts ADD COLUMN token_blob BLOB"],
     3: ["ALTER TABLE files ADD COLUMN md5 TEXT"],
+    4: [
+        "CREATE TABLE IF NOT EXISTS uploads ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,"
+        " local_path TEXT NOT NULL UNIQUE,"
+        " size_bytes INTEGER NOT NULL,"
+        " mtime_ns INTEGER NOT NULL,"
+        " resumable_uri TEXT NOT NULL,"
+        " created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    ],
 }
 
 

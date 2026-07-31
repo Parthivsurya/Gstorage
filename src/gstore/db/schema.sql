@@ -57,6 +57,20 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE INDEX IF NOT EXISTS idx_files_parent ON files(parent_id);
 CREATE INDEX IF NOT EXISTS idx_files_home ON files(home_account_id);
 
+-- In-flight resumable upload sessions, so an interrupted upload resumes from
+-- where it stopped instead of restarting the whole transfer. Keyed to a local
+-- file's identity (path + size + mtime); any change invalidates the session.
+-- A row is written once the session URI is known and dropped on completion.
+CREATE TABLE IF NOT EXISTS uploads (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id    INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+    local_path    TEXT NOT NULL UNIQUE,
+    size_bytes    INTEGER NOT NULL,
+    mtime_ns      INTEGER NOT NULL,
+    resumable_uri TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Reserved for Phase 6 (chunking across accounts). Defined now so the schema
 -- is stable; unused in v1.
 CREATE TABLE IF NOT EXISTS chunks (
