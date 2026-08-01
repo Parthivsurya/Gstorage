@@ -16,7 +16,7 @@ from typing import Callable
 from google.oauth2.credentials import Credentials
 
 from gstore.drive.download import download_file
-from gstore.drive.hashing import IntegrityError, verify_file
+from gstore.drive.hashing import verify_file
 from gstore.index import Chunk
 
 CredentialsFor = Callable[[int], Credentials]
@@ -65,14 +65,15 @@ def download_chunks(
                 done += chunk.size_bytes
 
         if expected_md5:
-            try:
-                verify_file(dest, expected_md5)
-            except IntegrityError:
-                dest.unlink(missing_ok=True)
-                raise
+            verify_file(dest, expected_md5)
 
         if on_progress is not None:
             on_progress(1.0)
         return dest
+    except Exception:
+        # Any failure — a bad chunk, a failed whole-file check, or a transport
+        # error mid-assembly — must not leave partial or corrupt output behind.
+        dest.unlink(missing_ok=True)
+        raise
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
