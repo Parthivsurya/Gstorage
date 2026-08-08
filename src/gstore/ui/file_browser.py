@@ -2,7 +2,9 @@
 
 Renders one virtual tree from the index regardless of which account each file
 physically lives on, and drives the whole file lifecycle: upload (Phase 4),
-download and delete (Phase 5).
+download and delete (Phase 5). "Scan Drive now" adds a live, read-only view that
+lists every file across all linked accounts straight from Google, independent of
+Gstore's index.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -26,11 +29,16 @@ from gstore.format import human_bytes
 from gstore.index import FileEntry, IndexStore
 from gstore.ui.delete_worker import DeleteWorker
 from gstore.ui.download_worker import DownloadWorker
+from gstore.ui.drive_download_worker import DriveDownloadWorker
+from gstore.ui.drive_scan_worker import DriveScanWorker, ScanResult, ScanRow
+from gstore.ui.drive_trash_worker import DriveTrashWorker
 from gstore.ui.upload_worker import UploadWorker
 
-# QListWidgetItem UserRole payload: (kind, id)
+# QListWidgetItem UserRole payload: (kind, id). For _DRIVE, id is the index of
+# the ScanRow within the current (search-filtered) live-scan result.
 _FOLDER = "folder"
 _FILE = "file"
+_DRIVE = "drivescan"
 
 
 class FileBrowser(QWidget):
@@ -41,9 +49,23 @@ class FileBrowser(QWidget):
         super().__init__()
         self.index = index
         self.current_parent_id: int | None = None  # None == virtual root
+        self._query = ""  # non-empty == flat search across the whole tree
+        # Live Drive scan: None == browsing the index; a ScanResult == showing
+        # the combined read-only listing pulled straight from every account.
+        self._scan: ScanResult | None = None
+        self._visible_rows: list[ScanRow] = []  # rows shown after search filter
         self._upload_worker: UploadWorker | None = None
         self._download_worker: DownloadWorker | None = None
         self._delete_worker: DeleteWorker | None = None
+        self._scan_worker: DriveScanWorker | None = None
+        self._drive_download_worker: DriveDownloadWorker | None = None
+        self._drive_trash_worker: DriveTrashWorker | None = None
+        self._trashing: ScanRow | None = None  # row being moved to Trash
+
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search all files…")
+        self.search_box.setClearButtonEnabled(True)
+        self.search_box.textChanged.connect(self._on_search_changed)
 
         self.breadcrumb = QHBoxLayout()
         self.breadcrumb.setSpacing(2)
@@ -64,6 +86,11 @@ class FileBrowser(QWidget):
         self.rename_button.clicked.connect(self._on_rename)
         self.delete_button = QPushButton("Delete")
         self.delete_button.clicked.connect(self._on_delete)
+        self.scan_button = QPushButton("Scan Drive now")
+        self.scan_button.setToolTip(
+            "List every file across all linked accounts, live from Google Drive."
+        )
+        self.scan_button.clicked.connect(self._on_scan_toggle)
 
         buttons = QHBoxLayout()
         for button in (
@@ -75,6 +102,7 @@ class FileBrowser(QWidget):
         ):
             buttons.addWidget(button)
         buttons.addStretch()
+        buttons.addWidget(self.scan_button)
 
         self.empty_hint = QLabel("This folder is empty.")
         self.empty_hint.setStyleSheet("color: #888;")
@@ -85,6 +113,7 @@ class FileBrowser(QWidget):
         self.transfer_status.setStyleSheet("color: #888;")
 
         layout = QVBoxLayout()
+        layout.addWidget(self.search_box)
         layout.addWidget(breadcrumb_box)
         layout.addWidget(self.entries)
         layout.addWidget(self.empty_hint)
@@ -98,7 +127,22 @@ class FileBrowser(QWidget):
     # -- navigation -----------------------------------------------------------
 
     def navigate_to(self, parent_id: int | None) -> None:
+        # Jumping to a folder leaves search mode so the folder's contents show.
+        if self._query:
+            self.search_box.clear()  # triggers _on_search_changed → refresh
         self.current_parent_id = parent_id
+        self.refresh()
+
+    @property
+    def _searching(self) -> bool:
+        return bool(self._query)
+
+    @property
+    def _scanning(self) -> bool:
+        return self._scan is not None
+
+    def _on_search_changed(self, text: str) -> None:
+        self._query = text.strip()
         self.refresh()
 
     def refresh(self) -> None:
@@ -112,6 +156,19 @@ class FileBrowser(QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+
+        # In scan / search mode the breadcrumb is meaningless (results span
+        # folders and accounts); show a summary line instead.
+        if self._scanning:
+            self.breadcrumb.addWidget(self._scan_summary_label())
+            self.breadcrumb.addStretch()
+            return
+        if self._searching:
+            label = QLabel("Search results — across all folders and accounts")
+            label.setStyleSheet("color: #888;")
+            self.breadcrumb.addWidget(label)
+            self.breadcrumb.addStretch()
+            return
 
         chain = self.index.folder_path(self.current_parent_id)
         self._add_crumb("Home", None)
@@ -136,6 +193,20 @@ class FileBrowser(QWidget):
 
     def _render_entries(self) -> None:
         self.entries.clear()
+
+        if self._scanning:
+            self._render_scan_rows()
+            return
+
+        if self._searching:
+            matches = self.index.search_files(self._query)
+            for entry in matches:
+                label = f"{self._file_label(entry)}    —  in {self._location(entry)}"
+                self._add_item(label, _FILE, entry.id)
+            self.empty_hint.setText(f"No files match “{self._query}”.")
+            self.empty_hint.setVisible(not matches)
+            return
+
         folders = self.index.list_folders(self.current_parent_id)
         files = self.index.list_files(self.current_parent_id)
 
@@ -144,7 +215,60 @@ class FileBrowser(QWidget):
         for entry in files:
             self._add_item(self._file_label(entry), _FILE, entry.id)
 
+        self.empty_hint.setText("This folder is empty.")
         self.empty_hint.setVisible(not folders and not files)
+
+    def _location(self, entry: FileEntry) -> str:
+        """Human path of the folder a file lives in, for search results."""
+        chain = self.index.folder_path(entry.parent_id)
+        return " / ".join(["Home", *(f.name for f in chain)])
+
+    # -- live Drive scan ------------------------------------------------------
+
+    def _render_scan_rows(self) -> None:
+        """Render the live combined listing, filtered by the search box."""
+        assert self._scan is not None
+        query = self._query.lower()
+        self._visible_rows = [
+            row for row in self._scan.rows if query in row.file.name.lower()
+        ]
+        for i, row in enumerate(self._visible_rows):
+            self._add_item(self._scan_label(row), _DRIVE, i)
+
+        if not self._scan.rows:
+            self.empty_hint.setText("No files found in any linked account.")
+        elif not self._visible_rows:
+            self.empty_hint.setText(f"No files match “{self._query}”.")
+        self.empty_hint.setVisible(not self._visible_rows)
+
+    def _scan_label(self, row: ScanRow) -> str:
+        f = row.file
+        size = human_bytes(f.size) if f.size is not None else "—"
+        icon = "📄"
+        suffix = ""
+        if f.is_google_doc:
+            icon = "📝"
+            suffix = " · Google Doc (open in browser to export)"
+        return f"{icon}  {f.name}    {size} · {row.account_email}{suffix}"
+
+    def _scan_summary_label(self) -> QLabel:
+        assert self._scan is not None
+        parts = [f"Live Drive scan — {len(self._scan.rows)} files across "
+                 f"{self._scanned_account_count()} account(s)"]
+        if self._scan.limited_accounts:
+            parts.append(
+                "· "
+                + ", ".join(self._scan.limited_accounts)
+                + " show only Gstore files until re-linked for full access"
+            )
+        label = QLabel("  ".join(parts))
+        label.setWordWrap(True)
+        label.setStyleSheet("color: #888;")
+        return label
+
+    def _scanned_account_count(self) -> int:
+        assert self._scan is not None
+        return len({row.account_email for row in self._scan.rows})
 
     def _file_label(self, entry: FileEntry) -> str:
         size = human_bytes(entry.size_bytes)
@@ -169,6 +293,13 @@ class FileBrowser(QWidget):
         kind, item_id = item.data(Qt.ItemDataRole.UserRole)
         if kind == _FOLDER:
             self.navigate_to(item_id)
+        elif kind == _DRIVE:
+            self._on_download()  # double-click a live result → save it
+        elif kind == _FILE and self._searching:
+            # Reveal the match in its home folder (also exits search mode).
+            entry = self.index.get_file(item_id)
+            if entry is not None:
+                self.navigate_to(entry.parent_id)
 
     # -- selection / button state --------------------------------------------
 
@@ -179,13 +310,53 @@ class FileBrowser(QWidget):
     def _busy(self) -> bool:
         return any(
             w is not None
-            for w in (self._upload_worker, self._download_worker, self._delete_worker)
+            for w in (
+                self._upload_worker,
+                self._download_worker,
+                self._delete_worker,
+                self._scan_worker,
+                self._drive_download_worker,
+                self._drive_trash_worker,
+            )
         )
+
+    def _selected_scan_row(self) -> ScanRow | None:
+        selection = self._selected()
+        if selection is None or selection[0] != _DRIVE:
+            return None
+        index = selection[1]
+        return self._visible_rows[index] if 0 <= index < len(self._visible_rows) else None
 
     def _update_buttons(self) -> None:
         selection = self._selected()
-        is_file = selection is not None and selection[0] == _FILE
         busy = self._busy()
+        self.scan_button.setText("Show Gstore files" if self._scanning else "Scan Drive now")
+        self.scan_button.setEnabled(not busy or self._scanning)
+
+        # Live-scan mode offers Download (regular binary files; Docs are
+        # export-only) and Delete (trash), the latter only for accounts that
+        # granted the full `drive` scope. Index-shaping actions (upload / new
+        # folder / rename) stay disabled — the scan isn't the index.
+        if self._scanning:
+            assert self._scan is not None
+            row = self._selected_scan_row()
+            self.download_button.setEnabled(
+                row is not None and row.file.is_downloadable and not busy
+            )
+            deletable = (
+                row is not None
+                and row.account_id in self._scan.writable_account_ids
+            )
+            self.delete_button.setEnabled(deletable and not busy)
+            for button in (
+                self.upload_button,
+                self.new_folder_button,
+                self.rename_button,
+            ):
+                button.setEnabled(False)
+            return
+
+        is_file = selection is not None and selection[0] == _FILE
 
         # Downloading needs the bytes; block it for files whose home account is
         # removed or revoked. Rename/delete stay allowed (index-only + best-effort
@@ -195,7 +366,10 @@ class FileBrowser(QWidget):
             entry = self.index.get_file(selection[1])
             downloadable = entry is not None and entry.is_available
 
-        self.upload_button.setEnabled(not busy)
+        # Upload / new-folder target the current folder, which is ambiguous while
+        # searching (results span folders); disable them until search is cleared.
+        self.upload_button.setEnabled(not busy and not self._searching)
+        self.new_folder_button.setEnabled(not busy and not self._searching)
         self.download_button.setEnabled(downloadable and not busy)
         self.rename_button.setEnabled(selection is not None and not busy)
         self.delete_button.setEnabled(selection is not None and not busy)
@@ -242,11 +416,54 @@ class FileBrowser(QWidget):
         self.transfer_bar.setVisible(False)
         self._update_buttons()
 
+    # -- live Drive scan ------------------------------------------------------
+
+    def _on_scan_toggle(self) -> None:
+        if self._scanning:
+            self._exit_scan()
+            return
+        if self._busy():
+            return
+        worker = DriveScanWorker(self)
+        worker.finished_scan.connect(self._on_scan_finished)
+        worker.finished.connect(self._on_scan_worker_finished)
+        self._scan_worker = worker  # set before _begin_transfer so buttons disable
+        self._begin_transfer("Scanning all accounts…", determinate=False)
+        worker.start()
+
+    def _on_scan_finished(self, result: ScanResult) -> None:
+        self._scan = result
+        # Search box now filters the live results instead of the index.
+        self.search_box.setPlaceholderText("Filter scanned files…")
+        if result.failures:
+            summary = "; ".join(f"{email}: {msg}" for email, msg in result.failures)
+            self.transfer_status.setText(f"Some accounts could not be scanned — {summary}")
+        else:
+            self.transfer_status.setText(f"Scanned {len(result.rows)} files.")
+        self.refresh()
+
+    def _on_scan_worker_finished(self) -> None:
+        self._scan_worker = None
+        self.transfer_bar.setVisible(False)
+        self._update_buttons()
+
+    def _exit_scan(self) -> None:
+        self._scan = None
+        self._visible_rows = []
+        self.search_box.setPlaceholderText("Search all files…")
+        self.transfer_status.setText("")
+        self.refresh()
+
     # -- download -------------------------------------------------------------
 
     def _on_download(self) -> None:
+        if self._busy():
+            return
+        if self._scanning:
+            self._download_scan_row()
+            return
         selection = self._selected()
-        if selection is None or selection[0] != _FILE or self._busy():
+        if selection is None or selection[0] != _FILE:
             return
         entry = self.index.get_file(selection[1])
         if entry is None:
@@ -264,6 +481,23 @@ class FileBrowser(QWidget):
         self._download_worker = worker
         worker.start()
 
+    def _download_scan_row(self) -> None:
+        row = self._selected_scan_row()
+        if row is None or not row.file.is_downloadable:
+            return
+        dest, _ = QFileDialog.getSaveFileName(self, "Save file as", row.file.name)
+        if not dest:
+            return
+        self._begin_transfer("Downloading…", determinate=True)
+
+        worker = DriveDownloadWorker(row.account_id, row.file.id, dest, row.file.md5, self)
+        worker.progress.connect(self._on_transfer_progress)
+        worker.succeeded.connect(self._on_download_succeeded)
+        worker.failed.connect(self._on_download_failed)
+        worker.finished.connect(self._on_drive_download_finished)
+        self._drive_download_worker = worker
+        worker.start()
+
     def _on_download_succeeded(self, dest: str) -> None:
         self.transfer_status.setText(f"Saved to {dest}")
 
@@ -273,6 +507,11 @@ class FileBrowser(QWidget):
 
     def _on_download_finished(self) -> None:
         self._download_worker = None
+        self.transfer_bar.setVisible(False)
+        self._update_buttons()
+
+    def _on_drive_download_finished(self) -> None:
+        self._drive_download_worker = None
         self.transfer_bar.setVisible(False)
         self._update_buttons()
 
@@ -309,8 +548,13 @@ class FileBrowser(QWidget):
     # -- delete ---------------------------------------------------------------
 
     def _on_delete(self) -> None:
+        if self._busy():
+            return
+        if self._scanning:
+            self._trash_scan_row()
+            return
         selection = self._selected()
-        if selection is None or self._busy():
+        if selection is None:
             return
         kind, item_id = selection
         if kind == _FOLDER:
@@ -354,5 +598,51 @@ class FileBrowser(QWidget):
 
     def _on_delete_finished(self) -> None:
         self._delete_worker = None
+        self.transfer_bar.setVisible(False)
+        self._update_buttons()
+
+    # -- trash a scanned file -------------------------------------------------
+
+    def _trash_scan_row(self) -> None:
+        row = self._selected_scan_row()
+        assert self._scan is not None
+        if row is None or row.account_id not in self._scan.writable_account_ids:
+            return
+        message = (
+            f"Move “{row.file.name}” to Trash on {row.account_email}?\n\n"
+            "It leaves your Drive but stays recoverable from Google Drive's "
+            "Trash for about 30 days."
+        )
+        if (
+            QMessageBox.question(self, "Move to Trash", message)
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+
+        self._trashing = row
+        self._begin_transfer("Moving to Trash…", determinate=False)
+        worker = DriveTrashWorker(row.account_id, row.file.id, self)
+        worker.succeeded.connect(self._on_trash_succeeded)
+        worker.failed.connect(self._on_trash_failed)
+        worker.finished.connect(self._on_trash_finished)
+        self._drive_trash_worker = worker
+        worker.start()
+
+    def _on_trash_succeeded(self) -> None:
+        # Drop the trashed file from the in-memory scan so it disappears without
+        # a full re-scan; a fresh scan would no longer list it anyway.
+        row = self._trashing
+        if row is not None and self._scan is not None:
+            self._scan.rows = [r for r in self._scan.rows if r is not row]
+        self.transfer_status.setText("Moved to Trash.")
+        self.refresh()
+
+    def _on_trash_failed(self, message: str) -> None:
+        self.transfer_status.setText("")
+        QMessageBox.warning(self, "Delete failed", message)
+
+    def _on_trash_finished(self) -> None:
+        self._drive_trash_worker = None
+        self._trashing = None
         self.transfer_bar.setVisible(False)
         self._update_buttons()
