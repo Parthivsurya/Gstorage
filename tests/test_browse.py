@@ -33,6 +33,16 @@ def test_regular_binary_file_is_downloadable():
     assert f.is_downloadable
 
 
+def test_thumbnail_link_is_carried_through():
+    f = _to_drive_file(
+        {"id": "p", "name": "pic.jpg", "mimeType": "image/jpeg",
+         "thumbnailLink": "https://drive/thumb?sz=s220"}
+    )
+    assert f.thumbnail_link == "https://drive/thumb?sz=s220"
+    # absent thumbnail → None, so the Gallery view falls back to a generic icon
+    assert _to_drive_file({"id": "x", "name": "n", "mimeType": "text/plain"}).thumbnail_link is None
+
+
 def test_folder_is_not_downloadable_and_has_no_size():
     f = _to_drive_file(
         {"id": "f1", "name": "Photos", "mimeType": "application/vnd.google-apps.folder"}

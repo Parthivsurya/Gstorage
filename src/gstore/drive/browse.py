@@ -33,6 +33,9 @@ class DriveFile:
     mime_type: str
     modified_time: str | None
     md5: str | None
+    # Short-lived, auth-required URL to a Drive-rendered preview (images, PDFs,
+    # docs). None when Drive has no thumbnail. Used by the Gallery view.
+    thumbnail_link: str | None = None
 
     @property
     def is_folder(self) -> bool:
@@ -61,6 +64,7 @@ def _to_drive_file(entry: dict) -> DriveFile:
         mime_type=entry.get("mimeType", ""),
         modified_time=entry.get("modifiedTime"),
         md5=entry.get("md5Checksum"),
+        thumbnail_link=entry.get("thumbnailLink"),
     )
 
 
@@ -102,7 +106,7 @@ def list_all_files(credentials: Credentials) -> list[DriveFile]:
                 spaces="drive",
                 fields=(
                     "nextPageToken, files(id, name, size, mimeType, "
-                    "modifiedTime, md5Checksum)"
+                    "modifiedTime, md5Checksum, thumbnailLink)"
                 ),
                 orderBy="folder,name_natural",
                 pageSize=1000,

@@ -9,18 +9,22 @@ Gstore's index.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -32,6 +36,7 @@ from gstore.ui.download_worker import DownloadWorker
 from gstore.ui.drive_download_worker import DriveDownloadWorker
 from gstore.ui.drive_scan_worker import DriveScanWorker, ScanResult, ScanRow
 from gstore.ui.drive_trash_worker import DriveTrashWorker
+from gstore.ui.thumbnail_worker import ThumbnailWorker
 from gstore.ui.upload_worker import UploadWorker
 
 # QListWidgetItem UserRole payload: (kind, id). For _DRIVE, id is the index of
@@ -39,6 +44,21 @@ from gstore.ui.upload_worker import UploadWorker
 _FOLDER = "folder"
 _FILE = "file"
 _DRIVE = "drivescan"
+
+# Second data role: the Drive file id an item maps to, for thumbnail delivery.
+_ROLE_DRIVE_ID = Qt.ItemDataRole.UserRole + 1
+
+# View modes for the entries list. LIST = detailed rows; GRID = wrapping icons
+# with names; GALLERY = large icons that fill in with Drive thumbnails.
+_VIEW_LIST = "list"
+_VIEW_GRID = "grid"
+_VIEW_GALLERY = "gallery"
+
+# (icon px, grid cell) per view mode for the QListWidget in IconMode.
+_GRID_SIZES = {
+    _VIEW_GRID: (48, QSize(110, 78)),
+    _VIEW_GALLERY: (140, QSize(180, 168)),
+}
 
 
 class FileBrowser(QWidget):
@@ -62,10 +82,22 @@ class FileBrowser(QWidget):
         self._drive_trash_worker: DriveTrashWorker | None = None
         self._trashing: ScanRow | None = None  # row being moved to Trash
 
+        self._view_mode = _VIEW_LIST
+        # Fetched Drive thumbnails, keyed by Drive file id, reused across renders.
+        self._thumb_cache: dict[str, QPixmap] = {}
+        self._thumb_worker: ThumbnailWorker | None = None
+        self._folder_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+        self._file_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search all files…")
         self.search_box.setClearButtonEnabled(True)
         self.search_box.textChanged.connect(self._on_search_changed)
+        self.view_switch = self._build_view_switch()
+
+        top_row = QHBoxLayout()
+        top_row.addWidget(self.search_box)
+        top_row.addLayout(self.view_switch)
 
         self.breadcrumb = QHBoxLayout()
         self.breadcrumb.setSpacing(2)
@@ -75,6 +107,7 @@ class FileBrowser(QWidget):
         self.entries = QListWidget()
         self.entries.itemDoubleClicked.connect(self._on_double_click)
         self.entries.currentItemChanged.connect(self._update_buttons)
+        self._apply_view_mode()
 
         self.upload_button = QPushButton("Upload file")
         self.upload_button.clicked.connect(self._on_upload)
@@ -113,7 +146,7 @@ class FileBrowser(QWidget):
         self.transfer_status.setStyleSheet("color: #888;")
 
         layout = QVBoxLayout()
-        layout.addWidget(self.search_box)
+        layout.addLayout(top_row)
         layout.addWidget(breadcrumb_box)
         layout.addWidget(self.entries)
         layout.addWidget(self.empty_hint)
@@ -123,6 +156,57 @@ class FileBrowser(QWidget):
         self.setLayout(layout)
 
         self.refresh()
+
+    # -- view modes -----------------------------------------------------------
+
+    def _build_view_switch(self) -> QHBoxLayout:
+        """Segmented Grid / List / Gallery control (icons via unicode glyphs)."""
+        row = QHBoxLayout()
+        row.setSpacing(0)
+        self._view_group = QButtonGroup(self)
+        specs = [
+            (_VIEW_GRID, "▦", "Grid — thumbnails in a wrapping grid"),
+            (_VIEW_LIST, "≣", "List — one detailed row per file"),
+            (_VIEW_GALLERY, "🖾", "Gallery — large Drive previews"),
+        ]
+        for mode, glyph, tip in specs:
+            button = QPushButton(glyph)
+            button.setCheckable(True)
+            button.setToolTip(tip)
+            button.setFixedWidth(36)
+            button.setChecked(mode == self._view_mode)
+            button.clicked.connect(lambda _=False, m=mode: self._set_view_mode(m))
+            self._view_group.addButton(button)
+            row.addWidget(button)
+        return row
+
+    def _set_view_mode(self, mode: str) -> None:
+        if mode == self._view_mode:
+            return
+        self._view_mode = mode
+        self._apply_view_mode()
+        self.refresh()
+
+    def _apply_view_mode(self) -> None:
+        if self._view_mode == _VIEW_LIST:
+            self.entries.setViewMode(QListView.ViewMode.ListMode)
+            self.entries.setIconSize(QSize(16, 16))
+            self.entries.setGridSize(QSize())  # reset → natural row height
+            self.entries.setWordWrap(False)
+            self.entries.setSpacing(0)
+            return
+        icon_px, cell = _GRID_SIZES[self._view_mode]
+        self.entries.setViewMode(QListView.ViewMode.IconMode)
+        self.entries.setIconSize(QSize(icon_px, icon_px))
+        self.entries.setGridSize(cell)
+        self.entries.setResizeMode(QListView.ResizeMode.Adjust)
+        self.entries.setMovement(QListView.Movement.Static)
+        self.entries.setWordWrap(True)
+        self.entries.setSpacing(6)
+
+    @property
+    def _icon_view(self) -> bool:
+        return self._view_mode != _VIEW_LIST
 
     # -- navigation -----------------------------------------------------------
 
@@ -202,7 +286,7 @@ class FileBrowser(QWidget):
             matches = self.index.search_files(self._query)
             for entry in matches:
                 label = f"{self._file_label(entry)}    —  in {self._location(entry)}"
-                self._add_item(label, _FILE, entry.id)
+                self._add_entry(label, entry.name, _FILE, entry.id, is_folder=False)
             self.empty_hint.setText(f"No files match “{self._query}”.")
             self.empty_hint.setVisible(not matches)
             return
@@ -211,9 +295,13 @@ class FileBrowser(QWidget):
         files = self.index.list_files(self.current_parent_id)
 
         for folder in folders:
-            self._add_item(f"📁  {folder.name}", _FOLDER, folder.id)
+            self._add_entry(
+                f"📁  {folder.name}", folder.name, _FOLDER, folder.id, is_folder=True
+            )
         for entry in files:
-            self._add_item(self._file_label(entry), _FILE, entry.id)
+            self._add_entry(
+                self._file_label(entry), entry.name, _FILE, entry.id, is_folder=False
+            )
 
         self.empty_hint.setText("This folder is empty.")
         self.empty_hint.setVisible(not folders and not files)
@@ -233,13 +321,67 @@ class FileBrowser(QWidget):
             row for row in self._scan.rows if query in row.file.name.lower()
         ]
         for i, row in enumerate(self._visible_rows):
-            self._add_item(self._scan_label(row), _DRIVE, i)
+            self._add_entry(
+                self._scan_label(row),
+                row.file.name,
+                _DRIVE,
+                i,
+                is_folder=False,
+                drive_id=row.file.id,
+            )
 
         if not self._scan.rows:
             self.empty_hint.setText("No files found in any linked account.")
         elif not self._visible_rows:
             self.empty_hint.setText(f"No files match “{self._query}”.")
         self.empty_hint.setVisible(not self._visible_rows)
+        self._maybe_fetch_thumbnails()
+
+    def _maybe_fetch_thumbnails(self) -> None:
+        """In Gallery mode, pull Drive previews for visible, un-cached rows."""
+        if self._view_mode != _VIEW_GALLERY or self._thumb_worker is not None:
+            return
+        jobs = [
+            (row.account_id, row.file.id, row.file.thumbnail_link)
+            for row in self._visible_rows
+            if row.file.thumbnail_link and row.file.id not in self._thumb_cache
+        ]
+        if not jobs:
+            return
+        worker = ThumbnailWorker(jobs, self)
+        worker.ready.connect(self._on_thumbnail_ready)
+        worker.finished.connect(self._on_thumbnail_worker_finished)
+        self._thumb_worker = worker
+        worker.start()
+
+    def _on_thumbnail_ready(self, drive_id: str, data: bytes) -> None:
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            return
+        self._thumb_cache[drive_id] = pixmap
+        if self._view_mode != _VIEW_GALLERY:
+            return
+        icon = QIcon(pixmap)
+        for i in range(self.entries.count()):
+            item = self.entries.item(i)
+            if item.data(_ROLE_DRIVE_ID) == drive_id:
+                item.setIcon(icon)
+
+    def _on_thumbnail_worker_finished(self) -> None:
+        self._thumb_worker = None
+        # Rows that became visible while the worker ran (e.g. filter changed)
+        # still need thumbnails — kick off another pass for any left uncached.
+        if self._scanning:
+            self._maybe_fetch_thumbnails()
+
+    def closeEvent(self, event) -> None:
+        # The thumbnail worker auto-starts on every Gallery render, so it may be
+        # mid-fetch at close; stop it so the QThread isn't destroyed while running.
+        worker = self._thumb_worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+            worker.wait(3000)
+        super().closeEvent(event)
 
     def _scan_label(self, row: ScanRow) -> str:
         f = row.file
@@ -284,10 +426,38 @@ class FileBrowser(QWidget):
             return f"📄  {entry.name}    {size} · split into {entry.chunk_count} chunks"
         return f"📄  {entry.name}    {size} · {entry.home_account_email}"
 
-    def _add_item(self, text: str, kind: str, item_id: int) -> None:
-        item = QListWidgetItem(text)
+    def _add_entry(
+        self,
+        list_text: str,
+        name: str,
+        kind: str,
+        item_id: int,
+        *,
+        is_folder: bool,
+        drive_id: str | None = None,
+    ) -> None:
+        """Add one row/tile. List mode shows the detailed `list_text`; the icon
+        modes show the plain `name` under a real icon (or a Drive thumbnail)."""
+        item = QListWidgetItem()
+        if self._icon_view:
+            item.setText(name)
+            item.setIcon(self._icon_for(is_folder, drive_id))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        else:
+            item.setText(list_text)
         item.setData(Qt.ItemDataRole.UserRole, (kind, item_id))
+        if drive_id is not None:
+            item.setData(_ROLE_DRIVE_ID, drive_id)
         self.entries.addItem(item)
+
+    def _icon_for(self, is_folder: bool, drive_id: str | None) -> QIcon:
+        if (
+            self._view_mode == _VIEW_GALLERY
+            and drive_id is not None
+            and drive_id in self._thumb_cache
+        ):
+            return QIcon(self._thumb_cache[drive_id])
+        return self._folder_icon if is_folder else self._file_icon
 
     def _on_double_click(self, item: QListWidgetItem) -> None:
         kind, item_id = item.data(Qt.ItemDataRole.UserRole)
