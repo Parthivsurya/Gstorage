@@ -77,6 +77,28 @@ def _parent_clause(parent_id: int | None) -> tuple[str, tuple]:
     return "parent_id = ?", (parent_id,)
 
 
+def _escape_like(term: str) -> str:
+    """Escape LIKE wildcards so a user's search term is matched literally."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+# Shared projection for a FileEntry: joins the home account (for email/status)
+# and computes chunk counts so chunked/unavailable files render correctly.
+# Callers append a WHERE/ORDER clause. Kept in one place so the four file
+# queries below stay in lockstep as columns evolve.
+_FILE_SELECT = (
+    "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
+    "a.email AS home_account_email, a.status AS home_account_status, "
+    "f.drive_file_id, f.md5, "
+    "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
+    "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
+    " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
+    "AS chunk_unavailable, "
+    "f.created_at, f.modified_at FROM files f "
+    "LEFT JOIN accounts a ON a.id = f.home_account_id "
+)
+
+
 class IndexStore:
     def __init__(self, db) -> None:
         self.db = db
@@ -144,18 +166,26 @@ class IndexStore:
     def list_files(self, parent_id: int | None) -> list[FileEntry]:
         clause, params = _parent_clause(parent_id)
         rows = self.db.conn.execute(
-            "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, "
-            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
-            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
-            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
-            "AS chunk_unavailable, "
-            "f.created_at, "
-            "f.modified_at FROM files f "
-            "LEFT JOIN accounts a ON a.id = f.home_account_id "
-            f"WHERE f.{clause} ORDER BY f.name COLLATE NOCASE",
+            _FILE_SELECT + f"WHERE f.{clause} ORDER BY f.name COLLATE NOCASE",
             params,
+        ).fetchall()
+        return [self._file(r) for r in rows]
+
+    def search_files(self, query: str) -> list[FileEntry]:
+        """Every file whose name contains `query`, across the whole tree.
+
+        A flat, account-spanning view: results ignore folder boundaries so the
+        same term surfaces matches wherever they physically live. Case-insensitive
+        substring match; LIKE wildcards in the term are matched literally.
+        """
+        query = query.strip()
+        if not query:
+            return []
+        like = f"%{_escape_like(query)}%"
+        rows = self.db.conn.execute(
+            _FILE_SELECT
+            + "WHERE f.name LIKE ? ESCAPE '\\' ORDER BY f.name COLLATE NOCASE",
+            (like,),
         ).fetchall()
         return [self._file(r) for r in rows]
 
@@ -178,34 +208,14 @@ class IndexStore:
 
     def get_file(self, file_id: int) -> FileEntry | None:
         row = self.db.conn.execute(
-            "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, "
-            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
-            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
-            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
-            "AS chunk_unavailable, "
-            "f.created_at, "
-            "f.modified_at FROM files f "
-            "LEFT JOIN accounts a ON a.id = f.home_account_id "
-            "WHERE f.id = ?",
+            _FILE_SELECT + "WHERE f.id = ?",
             (file_id,),
         ).fetchone()
         return self._file(row) if row else None
 
     def list_files_for_account(self, account_id: int) -> list[FileEntry]:
         rows = self.db.conn.execute(
-            "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, "
-            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
-            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
-            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
-            "AS chunk_unavailable, "
-            "f.created_at, "
-            "f.modified_at FROM files f "
-            "LEFT JOIN accounts a ON a.id = f.home_account_id "
-            "WHERE f.home_account_id = ?",
+            _FILE_SELECT + "WHERE f.home_account_id = ?",
             (account_id,),
         ).fetchall()
         return [self._file(r) for r in rows]
@@ -230,17 +240,7 @@ class IndexStore:
         self, account_id: int, drive_file_id: str
     ) -> FileEntry | None:
         row = self.db.conn.execute(
-            "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, "
-            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
-            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
-            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
-            "AS chunk_unavailable, "
-            "f.created_at, "
-            "f.modified_at FROM files f "
-            "LEFT JOIN accounts a ON a.id = f.home_account_id "
-            "WHERE f.home_account_id = ? AND f.drive_file_id = ?",
+            _FILE_SELECT + "WHERE f.home_account_id = ? AND f.drive_file_id = ?",
             (account_id, drive_file_id),
         ).fetchone()
         return self._file(row) if row else None
@@ -257,17 +257,8 @@ class IndexStore:
             "  UNION ALL "
             "  SELECT f.id FROM folders f JOIN sub s ON f.parent_id = s.id"
             ") "
-            "SELECT f.id, f.name, f.parent_id, f.size_bytes, f.home_account_id, "
-            "a.email AS home_account_email, a.status AS home_account_status, "
-            "f.drive_file_id, f.md5, "
-            "(SELECT COUNT(*) FROM chunks c WHERE c.file_id = f.id) AS chunk_count, "
-            "(SELECT COUNT(*) FROM chunks c LEFT JOIN accounts a2 ON a2.id = c.account_id "
-            " WHERE c.file_id = f.id AND (c.account_id IS NULL OR a2.status = 'revoked')) "
-            "AS chunk_unavailable, "
-            "f.created_at, "
-            "f.modified_at FROM files f "
-            "LEFT JOIN accounts a ON a.id = f.home_account_id "
-            "WHERE f.parent_id IN (SELECT id FROM sub)",
+            + _FILE_SELECT
+            + "WHERE f.parent_id IN (SELECT id FROM sub)",
             (folder_id,),
         ).fetchall()
         return [self._file(r) for r in rows]
