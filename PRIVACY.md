@@ -15,16 +15,22 @@ files, your account contents, or your credentials.
 
 ## What Gstore accesses
 
-When you click **Sign in with Google**, Gstore requests a single Google Drive
-scope:
+When you click **Sign in with Google**, Gstore requests these Google Drive
+scopes:
 
-- `https://www.googleapis.com/auth/drive.file` — access limited to files that
-  Gstore itself creates or that you explicitly open with it. Gstore **cannot**
-  see or touch the rest of your Drive.
+- `https://www.googleapis.com/auth/drive.file` — lets Gstore create, upload,
+  download, and delete its own files across your accounts.
+- `https://www.googleapis.com/auth/drive` (full Drive access) — powers the local,
+  combined **Scan Drive now** listing (seeing every file across your accounts),
+  lets you download any file you select, and lets you **move a selected file to
+  Trash** on your request. Gstore only ever acts on files you explicitly pick;
+  scan-deletes move files to Google Drive's Trash (recoverable ~30 days), never a
+  permanent erase.
 
-Gstore also reads your account's storage quota (total / used / free space) so it
-can show a combined storage view, and your account's email address so it can
-label the account in the app.
+All access is exercised locally from your own machine; nothing is sent to any
+server operated by the developer. Gstore also reads each account's storage quota
+(total / used / free space) for the combined storage view, and its email address
+to label the account in the app.
 
 ## What Gstore stores, and where
 

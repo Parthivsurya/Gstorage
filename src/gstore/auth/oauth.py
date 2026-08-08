@@ -17,10 +17,22 @@ from googleapiclient.discovery import build
 
 from gstore import config
 
-# `drive.file` limits the app to files it creates — far lighter to verify than
-# full-drive access. about.get (used here and in the Phase 2 storage view) is
-# available under this scope, so no extra identity scopes are requested.
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+# `drive.file` lets the app create/manage its own files (upload, download,
+# delete of Gstore-placed files). The full `drive` scope additionally lets it
+# *see* every file already in each account's Drive (powering the live combined
+# "Scan Drive now" view) and *modify* them — used to move a scanned file to
+# Trash on request. about.get (Phase 2 storage view) works under all of these.
+#
+# `drive` is a **restricted** scope (broader than the earlier `drive.readonly`):
+# production use needs Google verification + a CASA security assessment, and
+# every account must re-consent. Accounts linked before this change keep only
+# their originally granted scopes until re-linked (Storage tab → re-link);
+# DRIVE_READONLY_SCOPE is retained so such older read-only tokens are still
+# recognized as able to see the whole Drive.
+DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive"
+SCOPES = [DRIVE_FILE_SCOPE, DRIVE_FULL_SCOPE]
 
 # Shown in the browser tab after a successful redirect.
 SUCCESS_MESSAGE = "Gstore: account linked. You can close this tab and return to the app."

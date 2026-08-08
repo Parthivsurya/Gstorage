@@ -99,7 +99,14 @@ class AccountStore:
             raise ValueError(f"Account {account_id} has no stored credentials")
 
         info = json.loads(keystore.decrypt(row["token_blob"]).decode("utf-8"))
-        credentials = Credentials.from_authorized_user_info(info, scopes=SCOPES)
+        # Use the scopes actually granted to this token (stored in the blob), not
+        # the app's current SCOPES: an account linked before the readonly upgrade
+        # only holds drive.file, and forcing a broader scope list here would make
+        # its refresh fail. `info["scopes"]` is present for tokens saved via
+        # to_json(); SCOPES is only a fallback for older blobs that lack it.
+        credentials = Credentials.from_authorized_user_info(
+            info, scopes=info.get("scopes") or SCOPES
+        )
 
         if not credentials.valid:
             try:

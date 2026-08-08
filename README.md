@@ -107,7 +107,14 @@ cp /path/to/client_secret.json \
 ```
 
 Resolution order: `GSTORE_CLIENT_SECRETS` → app-data `client_secret.json` →
-bundled client. Requested scope: `https://www.googleapis.com/auth/drive.file`.
+bundled client. Requested scopes: `.../auth/drive.file` (manage Gstore's own
+files) and `.../auth/drive` (full access, powering the live **Scan Drive now**
+combined view plus download/trash of a selected file). The full `drive` scope is
+**restricted**, so a production build needs Google's OAuth verification + CASA
+security assessment, and every account must re-consent — accounts linked before
+this change keep their older scopes: they still show only their Gstore files in
+the scan and cannot delete non-Gstore files until re-linked (Storage tab →
+re-link). Scan-deletes move files to Trash (recoverable), not a permanent erase.
 
 ### Google Cloud project setup (maintainers only)
 
