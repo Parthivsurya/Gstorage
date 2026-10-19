@@ -16,6 +16,7 @@ the first time. Fixing that needs an Apple Developer ID, codesign --deep
 
 from __future__ import annotations
 
+import platform
 import plistlib
 import shutil
 import subprocess
@@ -49,7 +50,11 @@ def build_dmg(app: Path = APP) -> Path:
     if shutil.which("hdiutil") is None:
         sys.exit("hdiutil not found — this script needs macOS.")
 
-    output = app.parent / f"Gstore-{_app_version(app)}.dmg"
+    # Include the architecture: an Apple Silicon build cannot run on Intel at
+    # all, so the two images must not overwrite each other when both are built
+    # and published side by side.
+    arch = platform.machine()  # "arm64" or "x86_64"
+    output = app.parent / f"Gstore-{_app_version(app)}-{arch}.dmg"
 
     with tempfile.TemporaryDirectory() as tmp:
         staging = Path(tmp) / VOLUME_NAME

@@ -3,9 +3,12 @@
 
 Build from the project root:
 
-    .venv/bin/pyinstaller packaging/gstore.spec
+    .venv/bin/pyinstaller packaging/gstore.spec      # macOS
+    .venv\\Scripts\\pyinstaller packaging/gstore.spec   # Windows
 
-Produces ``dist/Gstore.app``. Bundles the packaged data files the app reads at
+Produces ``dist/Gstore.app`` on macOS and ``dist/Gstore/Gstore.exe`` on Windows.
+PyInstaller does not cross-compile: each platform's build must run on that
+platform (see .github/workflows/release.yml, which does both). Bundles the packaged data files the app reads at
 runtime via importlib.resources — the SQL schema (``gstore/db/*.sql``) and the
 OAuth Desktop client (``gstore/auth/client_config.json``). The client file is
 gitignored, so this embeds the copy present on the build machine.
@@ -15,13 +18,17 @@ to (re)generate it from the logo master.
 """
 
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # App icon, generated from the logo master by packaging/make_icon.py. Built
-# separately (it needs macOS sips/iconutil) so a missing file degrades to an
-# unbranded bundle instead of breaking the build.
-ICON = os.path.join(SPECPATH, os.pardir, "assets", "Gstore.icns")  # noqa: F821
+# separately (the .icns needs macOS sips/iconutil) so a missing file degrades to
+# an unbranded build instead of breaking it. Windows wants the .ico.
+IS_MAC = sys.platform == "darwin"
+ASSETS = os.path.join(SPECPATH, os.pardir, "assets")  # noqa: F821
+ICON = os.path.join(ASSETS, "Gstore.icns" if IS_MAC else "Gstore.ico")
+ICON = ICON if os.path.isfile(ICON) else None
 
 # Only the resources the app actually reads at runtime; keeps the bundle lean.
 datas = collect_data_files("gstore", includes=["**/*.sql", "**/*.json"])
@@ -51,7 +58,8 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    console=False,  # GUI app: no terminal window on Windows
+    icon=ICON,      # ignored on macOS, where BUNDLE carries the icon
 )
 
 coll = COLLECT(
@@ -63,10 +71,12 @@ coll = COLLECT(
     name="Gstore",
 )
 
+# BUNDLE is macOS-only. On Windows and Linux the COLLECT directory above is the
+# deliverable: dist/Gstore/Gstore.exe next to its libraries.
 app = BUNDLE(
     coll,
     name="Gstore.app",
-    icon=ICON if os.path.isfile(ICON) else None,
+    icon=ICON,
     bundle_identifier="com.gstore.app",
     version="0.0.2",
     info_plist={
@@ -77,4 +87,4 @@ app = BUNDLE(
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
     },
-)
+) if IS_MAC else None
