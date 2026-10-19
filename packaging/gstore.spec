@@ -9,11 +9,19 @@ Produces ``dist/Gstore.app``. Bundles the packaged data files the app reads at
 runtime via importlib.resources — the SQL schema (``gstore/db/*.sql``) and the
 OAuth Desktop client (``gstore/auth/client_config.json``). The client file is
 gitignored, so this embeds the copy present on the build machine.
+
+The app icon comes from ``assets/Gstore.icns``; run ``packaging/make_icon.py``
+to (re)generate it from the logo master.
 """
 
 import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+# App icon, generated from the logo master by packaging/make_icon.py. Built
+# separately (it needs macOS sips/iconutil) so a missing file degrades to an
+# unbranded bundle instead of breaking the build.
+ICON = os.path.join(SPECPATH, os.pardir, "assets", "Gstore.icns")  # noqa: F821
 
 # Only the resources the app actually reads at runtime; keeps the bundle lean.
 datas = collect_data_files("gstore", includes=["**/*.sql", "**/*.json"])
@@ -58,7 +66,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="Gstore.app",
-    icon=None,
+    icon=ICON if os.path.isfile(ICON) else None,
     bundle_identifier="com.gstore.app",
     version="0.0.2",
     info_plist={
