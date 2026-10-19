@@ -35,6 +35,43 @@ def database_path() -> Path:
     return data_dir() / "gstore.db"
 
 
+# Opt-in "whole Drive" power mode.
+#
+# By default Gstore asks Google only for `drive.file`, which is not a restricted
+# scope: anyone can sign in, see their pooled storage and manage the files
+# Gstore itself placed, with no Google CASA security assessment required of the
+# app. Seeing files Gstore did *not* create (the combined "Scan Drive now" view)
+# needs the restricted `drive` scope, which Google only grants a verified app
+# holding a current CASA assessment — so it is opt-in rather than demanded of
+# every user at sign-in.
+#
+# Enabled by the GSTORE_FULL_DRIVE env var (development) or by the presence of a
+# marker file in the app-data dir (end users), so no settings UI is needed yet.
+# Changing it only affects accounts linked *afterwards*: an existing token keeps
+# whatever scopes it was granted until the account is re-linked.
+FULL_DRIVE_ENV = "GSTORE_FULL_DRIVE"
+FULL_DRIVE_FLAG_FILENAME = "full_drive.enabled"
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def full_drive_requested() -> bool:
+    """Whether to ask for the restricted `drive` scope at next sign-in."""
+    override = os.environ.get(FULL_DRIVE_ENV)
+    if override is not None:
+        return override.strip().lower() in _TRUTHY
+    return (data_dir() / FULL_DRIVE_FLAG_FILENAME).exists()
+
+
+def set_full_drive_requested(enabled: bool) -> None:
+    """Persist the opt-in for future sign-ins (ignores the env override)."""
+    flag = data_dir() / FULL_DRIVE_FLAG_FILENAME
+    if enabled:
+        flag.touch()
+    elif flag.exists():
+        flag.unlink()
+
+
 # OAuth "Desktop app" client-secrets file. End users no longer supply their
 # own: the app ships a bundled client (see gstore/auth/client_config.json). The
 # per-user file and env var remain as overrides — mainly for development and

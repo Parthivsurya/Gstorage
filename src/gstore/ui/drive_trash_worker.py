@@ -13,6 +13,7 @@ from google.auth.exceptions import RefreshError
 
 from gstore.auth.accounts import AccountStore
 from gstore.db import Database
+from gstore.drive.browse import can_modify
 from gstore.drive.delete import trash_drive_file
 
 
@@ -37,6 +38,16 @@ class DriveTrashWorker(QThread):
                 self.failed.emit(
                     "That account's access was revoked or expired. Re-link it in "
                     "the Storage tab, then retry."
+                )
+                return
+            if not can_modify(credentials):
+                # The UI only offers Trash for accounts the scan marked
+                # writable, but guard here too: a token can lose the scope
+                # between scan and click, and Google would answer 403.
+                self.failed.emit(
+                    "That account was linked without whole-Drive access, so "
+                    "Gstore can only trash files it created itself. Enable "
+                    "whole-Drive access and re-link the account to trash this."
                 )
                 return
             trash_drive_file(credentials, self.drive_file_id)

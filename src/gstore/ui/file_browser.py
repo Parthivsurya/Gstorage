@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gstore import config
 from gstore.format import human_bytes
 from gstore.index import FileEntry, IndexStore
 from gstore.ui.delete_worker import DeleteWorker
@@ -398,10 +399,18 @@ class FileBrowser(QWidget):
         parts = [f"Live Drive scan — {len(self._scan.rows)} files across "
                  f"{self._scanned_account_count()} account(s)"]
         if self._scan.limited_accounts:
+            # Re-linking only widens an account if whole-Drive access is
+            # actually enabled; otherwise sign-in deliberately asks for the
+            # narrow scope and re-linking would change nothing.
+            remedy = (
+                " until re-linked for full access"
+                if config.full_drive_requested()
+                else " — whole-Drive access is off, so Gstore sees only its own"
+                     " files here"
+            )
             parts.append(
-                "· "
-                + ", ".join(self._scan.limited_accounts)
-                + " show only Gstore files until re-linked for full access"
+                "· " + ", ".join(self._scan.limited_accounts) + " show only "
+                "Gstore files" + remedy
             )
         label = QLabel("  ".join(parts))
         label.setWordWrap(True)
