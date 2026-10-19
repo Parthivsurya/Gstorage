@@ -28,17 +28,12 @@ jobs:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    # An Intel runner being retired should not block the other platforms.
-    continue-on-error: ${{ matrix.optional || false }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
             label: macOS (Apple Silicon)
-          - os: macos-13
-            label: macOS (Intel)
-            optional: true
           - os: windows-latest
             label: Windows
 
@@ -112,10 +107,7 @@ jobs:
   release:
     name: Publish the Release
     needs: build
-    # always(): publish with whatever artifacts exist. The Intel runner is
-    # frequently capacity-constrained, and waiting on it would block releasing
-    # the two platforms that did build.
-    if: always() && startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -157,3 +149,55 @@ jobs:
           Gstore asks for your macOS login keychain password once, to store its
           encryption key. Choose "Always Allow" so it does not ask again.
           NOTES
+
+  # Intel macOS, kept separate and deliberately not a dependency of `release`.
+  # These runners are frequently unschedulable; when one is available the job
+  # uploads its DMG onto the release that has already been published, and when
+  # it is not, nothing is blocked and the release simply ships without it.
+  intel:
+    name: macOS (Intel, optional)
+    runs-on: macos-13
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pyinstaller pillow
+
+      - name: Restore the bundled OAuth client
+        shell: bash
+        env:
+          CLIENT_CONFIG: ${{ secrets.GSTORE_CLIENT_CONFIG }}
+        run: printf '%s' "$CLIENT_CONFIG" > src/gstore/auth/client_config.json
+
+      - name: Build
+        run: |
+          python packaging/make_icon.py
+          pyinstaller packaging/gstore.spec --noconfirm
+          python packaging/make_dmg.py
+          mv "$(ls dist/*.dmg | head -1)" dist/Gstore-macos-intel.dmg
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The release job may still be publishing; retry briefly.
+          for attempt in 1 2 3 4 5 6; do
+            if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              gh release upload "${GITHUB_REF_NAME}" dist/Gstore-macos-intel.dmg \
+                --repo "${GITHUB_REPOSITORY}" --clobber
+              exit 0
+            fi
+            echo "release not published yet (attempt $attempt), waiting..."
+            sleep 20
+          done
+          echo "::warning::Release never appeared; Intel build not attached."
