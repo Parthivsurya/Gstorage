@@ -92,7 +92,21 @@ def build() -> Image.Image:
     return icon
 
 
+LEGACY_NOTICE = """\
+make_logo.py is superseded. The logo is now authored artwork, kept at
+assets/gstore_logo_source.png, and assets/gstore_logo_1024.png is derived from
+it. This script drew the earlier programmatic mark and would overwrite both.
+
+Kept for reference only. Re-run deliberately with --force if you really want
+to regenerate the old drawn logo.
+"""
+
+
 def main() -> None:
+    import sys
+
+    if "--force" not in sys.argv:
+        sys.exit(LEGACY_NOTICE)
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_dir = os.path.join(here, "assets")
     os.makedirs(out_dir, exist_ok=True)
