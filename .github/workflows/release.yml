@@ -27,6 +27,7 @@ jobs:
   build:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     # An Intel runner being retired should not block the other platforms.
     continue-on-error: ${{ matrix.optional || false }}
     strategy:
@@ -79,14 +80,26 @@ jobs:
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: python packaging/make_dmg.py
+        shell: bash
+        run: |
+          python packaging/make_dmg.py
+          # Rename to a version-less asset name. The direct-download URL
+          # (/releases/latest/download/<name>) hardcodes the filename, so a
+          # version in it would break the link on every new release.
+          built=$(ls dist/*.dmg | head -1)
+          case "$(uname -m)" in
+            arm64)  stable="dist/Gstore-macos-arm64.dmg" ;;
+            *)      stable="dist/Gstore-macos-intel.dmg" ;;
+          esac
+          mv "$built" "$stable"
+          echo "packaged $stable"
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = (python -c "import gstore; print(gstore.__version__)")
-          Compress-Archive -Path dist/Gstore/* -DestinationPath "dist/Gstore-$version-windows-x64.zip"
+          # Version-less name: see the macOS step for why.
+          Compress-Archive -Path dist/Gstore/* -DestinationPath "dist/Gstore-windows-x64.zip"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -99,7 +112,10 @@ jobs:
   release:
     name: Publish the Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # always(): publish with whatever artifacts exist. The Intel runner is
+    # frequently capacity-constrained, and waiting on it would block releasing
+    # the two platforms that did build.
+    if: always() && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -118,11 +134,13 @@ jobs:
             --notes-file - <<'NOTES'
           ## Downloads
 
-          | Platform | File |
+          | Platform | Download |
           | --- | --- |
-          | macOS (Apple Silicon) | `Gstore-*-arm64.dmg` |
-          | macOS (Intel) | `Gstore-*-x86_64.dmg` |
-          | Windows 64-bit | `Gstore-*-windows-x64.zip` |
+          | macOS (Apple Silicon) | [Gstore-macos-arm64.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg) |
+          | macOS (Intel) | [Gstore-macos-intel.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-intel.dmg) |
+          | Windows 64-bit | [Gstore-windows-x64.zip](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip) |
+
+          Those links always resolve to the newest release.
 
           ### First launch
 

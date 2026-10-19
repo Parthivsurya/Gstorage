@@ -26,7 +26,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "dist" / "Gstore.app"
-VOLUME_NAME = "Gstore"
 
 
 def _app_version(app: Path) -> str:
@@ -54,10 +53,15 @@ def build_dmg(app: Path = APP) -> Path:
     # all, so the two images must not overwrite each other when both are built
     # and published side by side.
     arch = platform.machine()  # "arm64" or "x86_64"
-    output = app.parent / f"Gstore-{_app_version(app)}-{arch}.dmg"
+    version = _app_version(app)
+    output = app.parent / f"Gstore-{version}-{arch}.dmg"
+    # The published asset is renamed to a stable, version-less filename so the
+    # direct-download URL survives new releases — so carry the version in the
+    # volume name instead, where the user still sees it on mount.
+    volume_name = f"Gstore {version}"
 
     with tempfile.TemporaryDirectory() as tmp:
-        staging = Path(tmp) / VOLUME_NAME
+        staging = Path(tmp) / volume_name
         staging.mkdir()
         # Copy rather than move so a failed run leaves dist/ untouched.
         # symlinks=True keeps the framework symlinks inside the bundle intact;
@@ -70,7 +74,7 @@ def build_dmg(app: Path = APP) -> Path:
         subprocess.run(
             [
                 "hdiutil", "create",
-                "-volname", VOLUME_NAME,
+                "-volname", volume_name,
                 "-srcfolder", str(staging),
                 "-format", "UDZO",  # compressed, read-only
                 "-fs", "HFS+",      # widest compatibility for a shipped image
