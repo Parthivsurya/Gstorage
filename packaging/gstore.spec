@@ -30,6 +30,11 @@ ASSETS = os.path.join(SPECPATH, os.pardir, "assets")  # noqa: F821
 ICON = os.path.join(ASSETS, "Gstore.icns" if IS_MAC else "Gstore.ico")
 ICON = ICON if os.path.isfile(ICON) else None
 
+# Single source of truth: the version lives in gstore/__init__.py. Repeating it
+# here meant the bundle could claim a version the app did not report.
+sys.path.insert(0, os.path.join(SPECPATH, os.pardir, "src"))  # noqa: F821
+from gstore import __version__ as VERSION  # noqa: E402
+
 # Only the resources the app actually reads at runtime; keeps the bundle lean.
 datas = collect_data_files("gstore", includes=["**/*.sql", "**/*.json"])
 hiddenimports = collect_submodules("gstore")
@@ -78,12 +83,12 @@ app = BUNDLE(
     name="Gstore.app",
     icon=ICON,
     bundle_identifier="com.gstore.app",
-    version="0.0.2",
+    version=VERSION,
     info_plist={
         "CFBundleName": "Gstore",
         "CFBundleDisplayName": "Gstore",
-        "CFBundleShortVersionString": "0.0.2",
-        "CFBundleVersion": "0.0.2",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
     },
