@@ -1,0 +1,38 @@
+# GitHub Pages serves this branch from the repo root (Settings -> Pages:
+# source = main, path = /), so by default Jekyll turns EVERY tracked .md into
+# a public page on https://gstore.iampkb.dev/ — the domain the Google OAuth
+# branding review points at.
+#
+# Only two pages should be public: the README, which Jekyll renders as the
+# home page, and the privacy policy that OAuth verification requires. Anything
+# listed below is not published.
+#
+# Add new internal docs to this list, or keep them out of the repo entirely.
+
+title: Gstore
+description: >-
+  A local-only desktop app that pools several Google accounts into one unified
+  virtual drive. File data flows directly between your machine and Google.
+
+exclude:
+  # Source, tests and build tooling — never pages.
+  - src/
+  - tests/
+  - packaging/
+  - .github/
+  - pyproject.toml
+  - requirements.txt
+  # Internal documentation.
+  - docs/
+  - assets/README.md
+  # Local-only, should not exist in a Pages build, listed defensively.
+  - .venv/
+  - build/
+  - dist/
+  - .pytest_cache/
+  # Jekyll's own defaults, restored because setting `exclude` replaces them.
+  - Gemfile
+  - Gemfile.lock
+  - gemfiles
+  - node_modules
+  - vendor/
