@@ -13,6 +13,11 @@ single file list spans them. Gstore puts one folder tree over all of them, picks
 which account each upload should land on, and keeps track of where everything
 went.
 
+<img src="assets/screenshots/files-list.png" width="880"
+     alt="Gstore's Files tab: one folder tree listing files that physically live on three different Google accounts, each row showing its size and home account.">
+
+*One folder tree. Each row shows which account actually holds the file.*
+
 It is a desktop app, and it is **local-only**. File bytes travel straight
 between your machine and Google's servers. There is no Gstore server, no Gstore
 account, and nothing to sign up for — see the [privacy policy](PRIVACY.md).
@@ -88,6 +93,12 @@ account joins the pool. Repeat for every account you want to pool.
 You do **not** need a Google Cloud project to *use* a downloaded build — it
 ships its own OAuth client, so there is no console setup and no JSON to
 download.
+
+<img src="assets/screenshots/storage.png" width="880"
+     alt="Gstore's Storage tab: a combined total reading 24.3 GB free, 20.7 GB used of 45.0 GB across three synced accounts, with a usage bar per account.">
+
+Three 15 GB accounts read as one 45 GB pool, with each account's own usage
+below it.
 
 If an account's access is later revoked or expires, Gstore marks that row
 "needs re-link" and keeps its files listed rather than hiding them. Clicking
