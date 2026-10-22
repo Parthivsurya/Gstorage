@@ -53,7 +53,7 @@ def _require_tool(name: str) -> None:
 def build_icns(master: Path = MASTER, output: Path = ICNS_OUTPUT) -> Path:
     """Resample the master into every required size and assemble the .icns."""
     if not master.is_file():
-        sys.exit(f"Logo master not found: {master}\nRun packaging/make_logo.py first.")
+        sys.exit(f"Logo master not found: {master}\nSee assets/README.md.")
     for tool in ("sips", "iconutil"):
         _require_tool(tool)
 
@@ -79,7 +79,7 @@ def build_ico(master: Path = MASTER, output: Path = ICO_OUTPUT) -> Path:
     from PIL import Image
 
     if not master.is_file():
-        sys.exit(f"Logo master not found: {master}\nRun packaging/make_logo.py first.")
+        sys.exit(f"Logo master not found: {master}\nSee assets/README.md.")
     output.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(master) as img:
         img.convert("RGBA").save(output, format="ICO", sizes=ICO_SIZES)
