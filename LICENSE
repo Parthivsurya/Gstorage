@@ -1,0 +1,30 @@
+Copyright (c) 2026 PKB. All rights reserved.
+
+This source code is published for inspection and review only.
+
+No licence or permission is granted, expressly or by implication, to any
+person or organisation to use, copy, modify, adapt, merge, publish,
+distribute, sublicense, sell, or create derivative works from this software
+or any part of it, whether in source or binary form.
+
+Viewing this repository, or receiving a copy of it, does not grant any of
+the rights above. All rights not expressly granted in writing are reserved
+by the copyright holder.
+
+Permission may be granted on request. To ask, contact the owner of the
+repository at https://github.com/Parthivsurya/Gstorage.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
+
+Gstore depends on third-party packages that are separately licensed and are
+NOT covered by this notice. Each remains under its own terms, which continue
+to apply to it: PySide6/Qt (LGPL v3), google-auth, google-auth-oauthlib,
+google-api-python-client and cryptography (Apache 2.0), keyring and
+platformdirs (MIT).

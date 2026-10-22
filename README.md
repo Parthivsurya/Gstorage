@@ -4,6 +4,7 @@
 [![Build](https://github.com/Parthivsurya/Gstorage/actions/workflows/release.yml/badge.svg)](https://github.com/Parthivsurya/Gstorage/actions/workflows/release.yml)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#install)
+[![License](https://img.shields.io/badge/license-all%20rights%20reserved-red)](LICENSE)
 
 **Pool the free storage of several Google accounts into one drive.**
 
@@ -339,3 +340,17 @@ Still ahead:
 The original design document, including the reasoning behind the early
 decisions and the parts that did not survive contact with reality, is kept at
 [docs/implementation-plan.md](docs/implementation-plan.md).
+
+## Licence
+
+Copyright © 2026 PKB. **All rights reserved** — see [LICENSE](LICENSE).
+
+The source is public so it can be read and audited, which matters for an app
+that asks for access to your Google Drive. That is the only thing publishing
+it grants. It is **not** open source: no permission is given to use, copy,
+modify, redistribute or sell Gstore or any part of it. If you want to do any
+of those, ask.
+
+The build instructions above are provided for the copyright holder and for
+anyone who has been granted permission. Third-party dependencies (Qt/PySide6,
+the Google client libraries, and the rest) keep their own separate licences.
