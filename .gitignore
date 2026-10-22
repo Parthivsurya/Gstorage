@@ -1,11 +1,30 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
 *.egg-info/
+.pytest_cache/
+
+# Build output
 build/
 dist/
-.DS_Store
+
+# Generated app icons. packaging/make_icon.py derives these from
+# assets/gstore_logo_1024.png, and CI runs it before every build, so the
+# committed copies were never read by anything.
+assets/Gstore.icns
+assets/Gstore.ico
 
 # Bundled OAuth Desktop client, injected at build time — never commit real
 # credentials. See README "Bundling the OAuth client".
 src/gstore/auth/client_config.json
+
+# Internal OAuth-verification and CASA notes. These are kept outside the repo
+# (../Gstore-private/verification) because this branch is served publicly by
+# GitHub Pages.
+packaging/verification_notes.md
+packaging/google_reply_draft.md
+packaging/casa_kickoff.md
+
+# macOS
+.DS_Store
