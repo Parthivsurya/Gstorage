@@ -4,8 +4,8 @@ A local-only desktop app that pools several Google accounts (e.g. 3 × 15 GB)
 into one unified virtual drive. File data flows directly between your machine
 and Google — never through any server.
 
-See [drive-aggregator-implementation-plan.md](drive-aggregator-implementation-plan.md)
-for the full plan.
+See [docs/implementation-plan.md](docs/implementation-plan.md) for the
+original plan and the reasoning behind the early decisions.
 
 ## Status
 
