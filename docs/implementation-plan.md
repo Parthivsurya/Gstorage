@@ -1,5 +1,16 @@
 # Multi-Account Drive Aggregator — Implementation Plan
 
+> **Historical.** This is the pre-build plan from July 2026, kept for the
+> reasoning behind the locked decisions. It is not a description of the app as
+> it stands, and two entries below were overtaken by events:
+>
+> - **Scope.** The plan locks in `drive.file`. Gstore ships the full
+>   `https://www.googleapis.com/auth/drive` scope, which is why it needs OAuth
+>   app verification and a CASA assessment — the cost this plan was trying to
+>   avoid.
+> - **Phases.** Phases 1–5 are done, plus chunking, the multi-account scan and
+>   packaging. Read the source and the README for current behaviour.
+
 A desktop app that pools several Google accounts (e.g. 3 × 15 GB) into one unified ~45 GB virtual drive. Everything runs on the user's machine; file data flows directly between the user and Google, never through a server of yours.
 
 ---
