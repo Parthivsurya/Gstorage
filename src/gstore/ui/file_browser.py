@@ -9,6 +9,8 @@ Gstore's index.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -76,6 +78,8 @@ class FileBrowser(QWidget):
         self._scan: ScanResult | None = None
         self._visible_rows: list[ScanRow] = []  # rows shown after search filter
         self._upload_worker: UploadWorker | None = None
+        self._transfer_message = ""
+        self._transfer_total: int | None = None
         self._download_worker: DownloadWorker | None = None
         self._delete_worker: DeleteWorker | None = None
         self._scan_worker: DriveScanWorker | None = None
@@ -603,15 +607,40 @@ class FileBrowser(QWidget):
         self.rename_button.setEnabled(selection is not None and not busy)
         self.delete_button.setEnabled(selection is not None and not busy)
 
-    def _begin_transfer(self, message: str, determinate: bool) -> None:
+    def _begin_transfer(
+        self, message: str, determinate: bool, total_bytes: int | None = None
+    ) -> None:
         self.transfer_bar.setRange(0, 100 if determinate else 0)
         self.transfer_bar.setValue(0)
         self.transfer_bar.setVisible(True)
+        self._transfer_message = message
+        self._transfer_total = total_bytes
         self.transfer_status.setText(message)
         self._update_buttons()
 
+    def _set_transfer_message(self, message: str) -> None:
+        """Change the phase label without losing the percentage beside it."""
+        self._transfer_message = message
+        self._render_transfer_status(self.transfer_bar.value() / 100)
+
+    def _render_transfer_status(self, fraction: float) -> None:
+        """Write the phase, the percentage and (when known) the byte counts.
+
+        macOS's native Qt style draws a progress bar's fill but never its text,
+        whatever isTextVisible() says — so the percentage has to live in this
+        label or it is invisible on the platform the app ships for.
+        """
+        parts = [self._transfer_message, f"{int(fraction * 100)}%"]
+        if self._transfer_total:
+            done = int(fraction * self._transfer_total)
+            parts.append(
+                f"· {human_bytes(done)} of {human_bytes(self._transfer_total)}"
+            )
+        self.transfer_status.setText(" ".join(parts))
+
     def _on_transfer_progress(self, fraction: float) -> None:
         self.transfer_bar.setValue(int(fraction * 100))
+        self._render_transfer_status(fraction)
 
     # -- upload ---------------------------------------------------------------
 
@@ -621,14 +650,18 @@ class FileBrowser(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "Choose a file to upload")
         if not path:
             return
-        self._begin_transfer("Uploading…", determinate=True)
+        try:
+            total = Path(path).stat().st_size
+        except OSError:
+            total = None
+        self._begin_transfer("Uploading…", determinate=True, total_bytes=total)
 
         worker = UploadWorker(path, self.current_parent_id, self)
         worker.progress.connect(self._on_transfer_progress)
         worker.succeeded.connect(self._on_upload_succeeded)
         worker.failed.connect(self._on_upload_failed)
         worker.cancelled.connect(self._on_upload_cancelled)
-        worker.status.connect(self.transfer_status.setText)
+        worker.status.connect(self._set_transfer_message)
         worker.finished.connect(self._on_upload_finished)
         self._upload_worker = worker
         self.cancel_button.setEnabled(True)
