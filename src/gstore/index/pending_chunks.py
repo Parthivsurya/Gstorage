@@ -33,9 +33,15 @@ class PendingChunks:
     def completed(
         self, local_path: str, size_bytes: int, mtime_ns: int
     ) -> list[sqlite3.Row]:
-        """Rows for chunks already uploaded for this exact file, in order."""
+        """Rows for chunks already uploaded for this exact file, in order.
+
+        The `size_bytes` argument identifies the *file* — it is half the
+        identity key, with mtime — and is deliberately not returned. The
+        length of each chunk is `chunk_size`; reading the file size as if it
+        were the chunk length is exactly the bug this column exists to prevent.
+        """
         return self.db.conn.execute(
-            "SELECT sequence, account_id, drive_file_id, md5, size_bytes "
+            "SELECT sequence, account_id, drive_file_id, md5, chunk_size "
             "FROM pending_chunks WHERE local_path = ? AND size_bytes = ? "
             "AND mtime_ns = ? ORDER BY sequence",
             (local_path, size_bytes, mtime_ns),
@@ -51,14 +57,17 @@ class PendingChunks:
         drive_file_id: str,
         md5: str,
         chunk_size: int,
+        file_md5: str | None = None,
     ) -> None:
         self.db.conn.execute(
             "INSERT INTO pending_chunks(local_path, size_bytes, mtime_ns, sequence, "
-            "account_id, drive_file_id, md5, chunk_size) VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
+            "account_id, drive_file_id, md5, chunk_size, file_md5) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(local_path, sequence) DO UPDATE SET "
             "size_bytes = excluded.size_bytes, mtime_ns = excluded.mtime_ns, "
             "account_id = excluded.account_id, drive_file_id = excluded.drive_file_id, "
-            "md5 = excluded.md5, chunk_size = excluded.chunk_size",
+            "md5 = excluded.md5, chunk_size = excluded.chunk_size, "
+            "file_md5 = excluded.file_md5",
             (
                 local_path,
                 size_bytes,
@@ -68,9 +77,23 @@ class PendingChunks:
                 drive_file_id,
                 md5,
                 chunk_size,
+                file_md5,
             ),
         )
         self.db.conn.commit()
+
+    def file_md5(self, local_path: str, size_bytes: int, mtime_ns: int) -> str | None:
+        """The cached whole-file digest for this exact file, if one was stored.
+
+        Lets a resumed upload skip re-reading the entire file purely to
+        recompute a hash the first attempt already paid for.
+        """
+        row = self.db.conn.execute(
+            "SELECT file_md5 FROM pending_chunks WHERE local_path = ? "
+            "AND size_bytes = ? AND mtime_ns = ? AND file_md5 IS NOT NULL LIMIT 1",
+            (local_path, size_bytes, mtime_ns),
+        ).fetchone()
+        return row["file_md5"] if row else None
 
     def clear(self, local_path: str) -> None:
         self.db.conn.execute(

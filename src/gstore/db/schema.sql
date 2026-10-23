@@ -89,6 +89,9 @@ CREATE TABLE IF NOT EXISTS pending_chunks (
     drive_file_id TEXT NOT NULL,
     md5           TEXT NOT NULL,
     chunk_size    INTEGER NOT NULL DEFAULT 0,
+    -- Whole-file MD5, cached on the first attempt so a resume does not have to
+    -- re-read the entire file just to recompute a digest it already knows.
+    file_md5      TEXT,
     PRIMARY KEY (local_path, sequence)
 );
 

@@ -133,6 +133,16 @@ def upload_chunks(
                     raise Cancelled("upload cancelled")
                 fh.seek(plan.offset)
                 data = fh.read(plan.length)
+                if len(data) != plan.length:
+                    # The file shrank or was truncated while we were uploading
+                    # it. Sending the short read would store a chunk whose
+                    # length disagrees with the plan, and nothing would notice
+                    # until reassembly failed its checksum at download time.
+                    raise IntegrityError(
+                        f"{path.name} changed while uploading: chunk "
+                        f"{plan.sequence} expected {plan.length} bytes at "
+                        f"offset {plan.offset}, got {len(data)}."
+                    )
                 drive_id, md5 = _upload_bytes(
                     credentials_for(plan.account_id),
                     part_name(path.name, plan.sequence),

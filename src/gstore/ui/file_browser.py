@@ -628,6 +628,7 @@ class FileBrowser(QWidget):
         worker.succeeded.connect(self._on_upload_succeeded)
         worker.failed.connect(self._on_upload_failed)
         worker.cancelled.connect(self._on_upload_cancelled)
+        worker.status.connect(self.transfer_status.setText)
         worker.finished.connect(self._on_upload_finished)
         self._upload_worker = worker
         self.cancel_button.setEnabled(True)

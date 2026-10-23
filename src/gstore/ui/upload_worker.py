@@ -17,7 +17,12 @@ from gstore.auth.accounts import AccountStore
 from gstore.db import Database
 from gstore.drive.chunk_upload import ChunkUploadResult, upload_chunks
 from gstore.drive.hashing import md5_of_file
-from gstore.drive.placement import CHUNK_SIZE, choose_account, plan_missing_chunks
+from gstore.drive.placement import (
+    CHUNK_SIZE,
+    choose_account,
+    chunk_ranges,
+    plan_missing_chunks,
+)
 from gstore.drive.quota import fetch_storage_quota
 from gstore.drive.rate_limit import Cancelled
 from gstore.drive.upload import upload_file
@@ -40,7 +45,12 @@ class _ChunkResume:
         self._path = local_path
         self._size = size
         self._mtime = mtime
+        # Persisted alongside each chunk so a later resume can skip re-hashing.
+        self.file_md5: str | None = None
         pending.reset_if_changed(local_path, size, mtime)
+
+    def cached_file_md5(self) -> str | None:
+        return self._pending.file_md5(self._path, self._size, self._mtime)
 
     def completed(self) -> dict[int, ChunkUploadResult]:
         return {
@@ -49,7 +59,9 @@ class _ChunkResume:
                 account_id=row["account_id"],
                 drive_file_id=row["drive_file_id"],
                 md5=row["md5"],
-                size_bytes=row["size_bytes"],
+                # chunk_size, NOT size_bytes: the latter is the whole file's
+                # size, stored as part of this row's identity key.
+                size_bytes=row["chunk_size"],
             )
             for row in self._pending.completed(self._path, self._size, self._mtime)
         }
@@ -64,6 +76,7 @@ class _ChunkResume:
             result.drive_file_id,
             result.md5,
             result.size_bytes,
+            self.file_md5,
         )
 
     def clear(self) -> None:
@@ -77,6 +90,9 @@ class UploadWorker(QThread):
     # Distinct from `failed`: nothing went wrong and the partial transfer is
     # kept, so re-picking the same file continues from where it stopped.
     cancelled = Signal()
+    # Which phase the worker is in, so the UI label is not stuck on "Uploading…"
+    # while the file is actually being checksummed.
+    status = Signal(str)
 
     def __init__(self, local_path: str, parent_id: int | None, parent=None) -> None:
         super().__init__(parent)
@@ -185,6 +201,19 @@ class UploadWorker(QThread):
     ) -> None:
         resume = _ChunkResume(pending, path_key, size, mtime_ns)
         completed = resume.completed()
+
+        # Staged chunks are only reusable if they were cut to the same layout
+        # we are about to plan. If CHUNK_SIZE changed between attempts — or the
+        # rows predate chunk_size being recorded — mixing the two would stitch
+        # together overlapping or gapped byte ranges, and the result would only
+        # be caught by the whole-file checksum at download time. Start over
+        # instead; the abandoned parts are orphans that reconcile cleans up.
+        expected = {seq: length for seq, _offset, length in chunk_ranges(size, CHUNK_SIZE)}
+        if any(expected.get(seq) != r.size_bytes for seq, r in completed.items()):
+            resume.clear()
+            resume = _ChunkResume(pending, path_key, size, mtime_ns)
+            completed = resume.completed()
+
         # Plan only the chunks not already uploaded (resume-aware).
         assignments = plan_missing_chunks(
             candidates, size, set(completed), CHUNK_SIZE
@@ -196,7 +225,22 @@ class UploadWorker(QThread):
             )
             return
 
-        whole_md5 = md5_of_file(self.local_path)
+        # Hashing 19 GB takes minutes. Doing it on every retry, with the bar
+        # pinned at zero, is what made a resumed upload look hung — so the
+        # first attempt's digest is cached against the file's identity and
+        # every later attempt reuses it.
+        whole_md5 = resume.cached_file_md5()
+        if whole_md5 is None:
+            self.status.emit("Checksumming…")
+            whole_md5 = md5_of_file(
+                self.local_path,
+                on_progress=self.progress.emit,
+                should_stop=self.isInterruptionRequested,
+            )
+        resume.file_md5 = whole_md5
+        self.status.emit("Uploading…")
+        self.progress.emit(0.0)
+
         creds_cache: dict[int, object] = {}
 
         def credentials_for(account_id: int):

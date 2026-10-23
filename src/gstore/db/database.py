@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -47,6 +47,7 @@ _MIGRATIONS: dict[int, list[str]] = {
         " chunk_size INTEGER NOT NULL DEFAULT 0,"
         " PRIMARY KEY (local_path, sequence))"
     ],
+    8: ["ALTER TABLE pending_chunks ADD COLUMN file_md5 TEXT"],
 }
 
 
@@ -91,7 +92,17 @@ class Database:
         start = SCHEMA_VERSION if not had_accounts else (prior_version or 1)
         for version in range(start + 1, SCHEMA_VERSION + 1):
             for statement in _MIGRATIONS.get(version, []):
-                self.conn.execute(statement)
+                try:
+                    self.conn.execute(statement)
+                except sqlite3.OperationalError as err:
+                    # schema.sql above already creates, in full, any table
+                    # introduced after this DB's recorded version — so an
+                    # ADD COLUMN migration for one of those finds the column
+                    # present. That is redundant, not broken: an upgrade from
+                    # v1 would otherwise fail outright on a column that a
+                    # later migration's own CREATE TABLE had just supplied.
+                    if "duplicate column name" not in str(err):
+                        raise
 
         self.conn.execute(
             "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
