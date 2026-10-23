@@ -212,3 +212,56 @@ def test_upgraded_db_accepts_chunk_inserts(tmp_path):
         assert row["size_bytes"] == 10
     finally:
         db.close()
+
+
+def test_v7_db_gains_the_cached_file_digest(tmp_path):
+    """A DB that already had pending_chunks needs the ALTER to actually run."""
+    path = tmp_path / "v7.db"
+    from gstore.db.database import _SCHEMA_SQL
+
+    conn = sqlite3.connect(path)
+    conn.executescript(_SCHEMA_SQL.replace("    file_md5      TEXT,\n", ""))
+    conn.execute("INSERT INTO meta(key, value) VALUES('schema_version', '7')")
+    conn.commit()
+    assert "file_md5" not in {r[1] for r in conn.execute("PRAGMA table_info(pending_chunks)")}
+    conn.close()
+
+    db = Database(path).open().initialize()
+    assert "file_md5" in _columns(db.conn, "pending_chunks")
+    assert int(db.conn.execute(
+        "SELECT value FROM meta WHERE key='schema_version'"
+    ).fetchone()[0]) == SCHEMA_VERSION
+    db.close()
+
+
+def test_upgrade_survives_a_column_schema_sql_already_supplied(tmp_path):
+    """Regression: a v1 upgrade once died on 'duplicate column name'.
+
+    schema.sql creates tables introduced after the DB's version in full, so a
+    later ADD COLUMN migration for one of those finds the column already
+    present. That has to be tolerated, not raised — it used to abort startup
+    for anyone upgrading from before pending_chunks existed.
+    """
+    path = tmp_path / "legacy.db"
+    _write_v1_db(path)
+
+    db = Database(path).open().initialize()  # must not raise
+
+    assert "file_md5" in _columns(db.conn, "pending_chunks")
+    db.close()
+
+
+def test_upgraded_db_accepts_a_cached_digest(tmp_path):
+    path = tmp_path / "legacy.db"
+    _write_v1_db(path)
+    db = Database(path).open().initialize()
+
+    db.conn.execute(
+        "INSERT INTO pending_chunks(local_path, size_bytes, mtime_ns, sequence,"
+        " account_id, drive_file_id, md5, chunk_size, file_md5)"
+        " VALUES('/f.bin', 100, 1, 0, 1, 'd0', 'm0', 50, 'cached')"
+    )
+    db.conn.commit()
+    row = db.conn.execute("SELECT file_md5 FROM pending_chunks").fetchone()
+    assert row["file_md5"] == "cached"
+    db.close()
