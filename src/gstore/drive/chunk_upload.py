@@ -59,8 +59,14 @@ def _upload_bytes(
     name: str,
     data: bytes,
     should_stop: Callable[[], bool] | None = None,
+    on_progress: Callable[[float], None] | None = None,
 ) -> tuple[str, str]:
-    """Upload a bytes payload as one Drive file; verify + return (id, md5)."""
+    """Upload a bytes payload as one Drive file; verify + return (id, md5).
+
+    `on_progress` reports this chunk's own 0.0-1.0 completion as each inner
+    resumable piece lands, so a caller can show movement inside a 50 MB chunk
+    instead of only between chunks.
+    """
     local_md5 = hashlib.md5(data).hexdigest()
     service = drive_service(credentials)
     media = MediaIoBaseUpload(
@@ -74,9 +80,11 @@ def _upload_bytes(
     )
     response = None
     while response is None:
-        _status, response = execute_with_backoff(
+        status, response = execute_with_backoff(
             request.next_chunk, should_stop=should_stop
         )
+        if status is not None and on_progress is not None:
+            on_progress(status.progress())
 
     drive_id = response["id"]
     remote_md5 = response.get("md5Checksum")
@@ -143,11 +151,21 @@ def upload_chunks(
                         f"{plan.sequence} expected {plan.length} bytes at "
                         f"offset {plan.offset}, got {len(data)}."
                     )
+                # Report inside the chunk too. A 20 GB file is 410 chunks, so
+                # chunk-granular progress alone leaves the bar motionless for
+                # minutes at a time and the upload looks hung.
+                base = done_bytes
+
+                def chunk_progress(fraction: float, _base=base, _len=plan.length):
+                    if on_progress is not None:
+                        on_progress((_base + fraction * _len) / total)
+
                 drive_id, md5 = _upload_bytes(
                     credentials_for(plan.account_id),
                     part_name(path.name, plan.sequence),
                     data,
                     should_stop,
+                    chunk_progress,
                 )
                 result = ChunkUploadResult(
                     sequence=plan.sequence,

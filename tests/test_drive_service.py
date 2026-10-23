@@ -36,13 +36,20 @@ def test_ordinary_redirects_are_still_followed():
 
 
 def test_requests_have_a_bounded_timeout():
-    """Without this a dead network hangs a transfer for the library's 60s."""
+    """A request must not be able to block forever on a dead socket."""
     http = drive_service(_creds())._http.http
     assert http.timeout == TIMEOUT_SEC
 
 
-def test_timeout_is_well_under_the_library_default():
-    assert 0 < TIMEOUT_SEC < 60
+def test_timeout_is_generous_enough_for_a_5mb_upload_piece():
+    """A tight bound starves slow uplinks.
+
+    A resumable upload sends 5 MB per request. At 15 s that needs ~2.7 Mbps
+    upstream or every piece times out, retries and times out again — an upload
+    that never finishes. Responsiveness comes from retry/backoff and Cancel,
+    not from a short socket deadline.
+    """
+    assert TIMEOUT_SEC >= 60
 
 
 def test_the_transport_reaches_the_request_object():

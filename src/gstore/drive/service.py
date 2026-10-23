@@ -18,11 +18,15 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import build_http
 
-# Long enough to ride out a slow response on a healthy link, short enough that
-# a dead one is noticed quickly. Each attempt is retried with exponential
-# backoff — see gstore.drive.rate_limit — so this is a per-try bound, not a
-# deadline for the whole operation.
-TIMEOUT_SEC = 15
+# googleapiclient's own default, kept deliberately.
+#
+# A shorter bound was tried (15 s) to notice a dead network sooner, but a
+# resumable upload sends 5 MB per request: on a slow uplink a send can block
+# longer than that, and every piece would then time out, retry, and time out
+# again — an upload that never finishes. Responsiveness now comes from the
+# retry/backoff in gstore.drive.rate_limit and from the Cancel button, not
+# from a tight socket deadline.
+TIMEOUT_SEC = 60
 
 
 def drive_service(credentials: Credentials, timeout: int = TIMEOUT_SEC):

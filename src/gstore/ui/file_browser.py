@@ -610,7 +610,9 @@ class FileBrowser(QWidget):
     def _begin_transfer(
         self, message: str, determinate: bool, total_bytes: int | None = None
     ) -> None:
-        self.transfer_bar.setRange(0, 100 if determinate else 0)
+        # 0-1000, not 0-100: a 20 GB upload advances ~0.24% per chunk,
+        # which an integer percent would round away to no movement at all.
+        self.transfer_bar.setRange(0, 1000 if determinate else 0)
         self.transfer_bar.setValue(0)
         self.transfer_bar.setVisible(True)
         self._transfer_message = message
@@ -621,7 +623,7 @@ class FileBrowser(QWidget):
     def _set_transfer_message(self, message: str) -> None:
         """Change the phase label without losing the percentage beside it."""
         self._transfer_message = message
-        self._render_transfer_status(self.transfer_bar.value() / 100)
+        self._render_transfer_status(self.transfer_bar.value() / 1000)
 
     def _render_transfer_status(self, fraction: float) -> None:
         """Write the phase, the percentage and (when known) the byte counts.
@@ -630,7 +632,10 @@ class FileBrowser(QWidget):
         whatever isTextVisible() says — so the percentage has to live in this
         label or it is invisible on the platform the app ships for.
         """
-        parts = [self._transfer_message, f"{int(fraction * 100)}%"]
+        # One decimal below 10%: 200 MB of 20 GB is 0.98%, and an integer
+        # percent shows that real progress as a flat "0%".
+        pct = fraction * 100
+        parts = [self._transfer_message, f"{pct:.1f}%" if pct < 10 else f"{pct:.0f}%"]
         if self._transfer_total:
             done = int(fraction * self._transfer_total)
             parts.append(
@@ -639,7 +644,7 @@ class FileBrowser(QWidget):
         self.transfer_status.setText(" ".join(parts))
 
     def _on_transfer_progress(self, fraction: float) -> None:
-        self.transfer_bar.setValue(int(fraction * 100))
+        self.transfer_bar.setValue(int(fraction * 1000))
         self._render_transfer_status(fraction)
 
     # -- upload ---------------------------------------------------------------

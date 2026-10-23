@@ -64,10 +64,15 @@ class FakeDrive:
         self.raise_with: Exception | None = None
         self._n = 0
 
-    def upload_bytes(self, credentials, name, data, should_stop=None):
+    def upload_bytes(self, credentials, name, data, should_stop=None,
+                     on_progress=None):
         self._n += 1
         if self.fail_on is not None and self._n == self.fail_on:
             raise self.raise_with or ConnectionResetError(54, "Connection reset")
+        # Mirror the real function reporting its inner resumable pieces.
+        if on_progress is not None:
+            for frac in (0.5, 1.0):
+                on_progress(frac)
         drive_id = f"drive-{name}"
         self.store[drive_id] = data
         self.uploads.append((name, len(data)))
@@ -133,6 +138,20 @@ def test_each_chunk_records_its_own_length_not_the_file_size(drive, tmp_path):
 
     assert [r.size_bytes for r in results] == [2 * MB, 2 * MB, MB]
     assert sum(r.size_bytes for r in results) == len(data)
+
+
+def test_progress_moves_inside_a_chunk_not_only_between_them(drive, tmp_path):
+    """A 20 GB file is 410 chunks; chunk-granular progress looks frozen."""
+    path, data = _write(tmp_path, 4 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+
+    seen: list[float] = []
+    upload_chunks(path, plans, _creds_for, on_progress=seen.append)
+
+    # 4 chunks, each reporting twice -> more updates than there are chunks
+    assert len(seen) > len(plans)
+    assert seen == sorted(seen)
+    assert seen[-1] == pytest.approx(1.0)
 
 
 def test_progress_is_monotonic_and_reaches_one(drive, tmp_path):
