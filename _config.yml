@@ -25,6 +25,7 @@ exclude:
   # Internal documentation.
   - docs/
   - assets/README.md
+  - CHANGES.md
   # Local-only, should not exist in a Pages build, listed defensively.
   - .venv/
   - build/
