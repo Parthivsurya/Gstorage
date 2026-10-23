@@ -143,6 +143,17 @@ class FileBrowser(QWidget):
 
         self.transfer_bar = QProgressBar()
         self.transfer_bar.setVisible(False)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setVisible(False)
+        self.cancel_button.setToolTip(
+            "Stop the upload. What has already been uploaded is kept — choose "
+            "the same file again to carry on from here."
+        )
+        self.cancel_button.clicked.connect(self._on_cancel_upload)
+        transfer_row = QHBoxLayout()
+        transfer_row.addWidget(self.transfer_bar)
+        transfer_row.addWidget(self.cancel_button)
+
         self.transfer_status = QLabel("")
         self.transfer_status.setStyleSheet("color: #888;")
 
@@ -152,7 +163,7 @@ class FileBrowser(QWidget):
         layout.addWidget(self.entries)
         layout.addWidget(self.empty_hint)
         layout.addLayout(buttons)
-        layout.addWidget(self.transfer_bar)
+        layout.addLayout(transfer_row)
         layout.addWidget(self.transfer_status)
         self.setLayout(layout)
 
@@ -375,13 +386,52 @@ class FileBrowser(QWidget):
         if self._scanning:
             self._maybe_fetch_thumbnails()
 
+    def prepare_to_close(self) -> bool:
+        """Stop background threads before this widget is destroyed.
+
+        Qt only delivers QCloseEvent to top-level windows, and this is a tab —
+        so its own closeEvent never fires on quit. MainWindow calls this
+        instead. It matters: a QThread destroyed while still running aborts the
+        whole process (``QThread: Destroyed while thread is still running``),
+        which is what a mid-upload quit used to do.
+
+        Returns False if the user chose not to quit after all.
+        """
+        upload = self._upload_worker
+        if upload is not None and upload.isRunning():
+            answer = QMessageBox.question(
+                self,
+                "Upload in progress",
+                "An upload is still running.\n\n"
+                "Quitting pauses it — nothing already uploaded is lost, and "
+                "choosing the same file again will carry on from here.\n\n"
+                "Pause the upload and quit?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return False
+            upload.requestInterruption()
+            if not upload.wait(15000):
+                # Stuck in a socket read the timeout hasn't tripped yet. Killing
+                # the thread is ugly, but far better than aborting the process,
+                # and the staged chunks are already committed to the database.
+                upload.terminate()
+                upload.wait(2000)
+
+        # Auto-starts on every Gallery render, so it may be mid-fetch at quit.
+        thumbs = self._thumb_worker
+        if thumbs is not None and thumbs.isRunning():
+            thumbs.requestInterruption()
+            thumbs.wait(3000)
+        return True
+
     def closeEvent(self, event) -> None:
-        # The thumbnail worker auto-starts on every Gallery render, so it may be
-        # mid-fetch at close; stop it so the QThread isn't destroyed while running.
-        worker = self._thumb_worker
-        if worker is not None and worker.isRunning():
-            worker.requestInterruption()
-            worker.wait(3000)
+        # Only reached if this widget is ever shown as its own window; the
+        # normal quit path is MainWindow -> prepare_to_close().
+        if not self.prepare_to_close():
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def _scan_label(self, row: ScanRow) -> str:
@@ -577,9 +627,28 @@ class FileBrowser(QWidget):
         worker.progress.connect(self._on_transfer_progress)
         worker.succeeded.connect(self._on_upload_succeeded)
         worker.failed.connect(self._on_upload_failed)
+        worker.cancelled.connect(self._on_upload_cancelled)
         worker.finished.connect(self._on_upload_finished)
         self._upload_worker = worker
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setVisible(True)
         worker.start()
+
+    def _on_cancel_upload(self) -> None:
+        worker = self._upload_worker
+        if worker is None or not worker.isRunning():
+            return
+        # The worker checks between chunks and during retry backoff, so this is
+        # not instant; disable the button so it cannot be pressed twice.
+        self.cancel_button.setEnabled(False)
+        self.transfer_status.setText("Stopping after the current chunk…")
+        worker.requestInterruption()
+
+    def _on_upload_cancelled(self) -> None:
+        self.transfer_status.setText(
+            "Upload paused — choose the same file again to carry on."
+        )
+        self.refresh()
 
     def _on_upload_succeeded(self, name: str, email: str) -> None:
         self.transfer_status.setText(f"Uploaded {name} → {email}")
@@ -593,6 +662,7 @@ class FileBrowser(QWidget):
     def _on_upload_finished(self) -> None:
         self._upload_worker = None
         self.transfer_bar.setVisible(False)
+        self.cancel_button.setVisible(False)
         self._update_buttons()
 
     # -- live Drive scan ------------------------------------------------------

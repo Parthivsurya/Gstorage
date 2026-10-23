@@ -19,6 +19,7 @@ from gstore.drive.chunk_upload import ChunkUploadResult, upload_chunks
 from gstore.drive.hashing import md5_of_file
 from gstore.drive.placement import CHUNK_SIZE, choose_account, plan_missing_chunks
 from gstore.drive.quota import fetch_storage_quota
+from gstore.drive.rate_limit import Cancelled
 from gstore.drive.upload import upload_file
 from gstore.index import IndexStore
 from gstore.index.pending_chunks import PendingChunks
@@ -73,6 +74,9 @@ class UploadWorker(QThread):
     progress = Signal(float)  # 0.0 - 1.0
     succeeded = Signal(str, str)  # file name, placement description
     failed = Signal(str)
+    # Distinct from `failed`: nothing went wrong and the partial transfer is
+    # kept, so re-picking the same file continues from where it stopped.
+    cancelled = Signal()
 
     def __init__(self, local_path: str, parent_id: int | None, parent=None) -> None:
         super().__init__(parent)
@@ -128,6 +132,9 @@ class UploadWorker(QThread):
             self._upload_whole(
                 accounts, index, sessions, target, size, mtime_ns, path_key
             )
+        except Cancelled:
+            # Paused, not failed: the resumable session / staged chunks remain.
+            self.cancelled.emit()
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:
@@ -152,6 +159,7 @@ class UploadWorker(QThread):
             self.local_path,
             on_progress=self.progress.emit,
             session=session,
+            should_stop=self.isInterruptionRequested,
         )
         index.create_file(
             self.local_path.name,
@@ -205,6 +213,7 @@ class UploadWorker(QThread):
                 credentials_for,
                 on_progress=self.progress.emit,
                 resume=resume,
+                should_stop=self.isInterruptionRequested,
             )
         except RefreshError:
             # Uploaded chunks are staged; the next attempt resumes from them.

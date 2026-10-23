@@ -66,6 +66,7 @@ def upload_file(
     local_path: Path,
     on_progress: Callable[[float], None] | None = None,
     session: UploadSession | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> UploadResult:
     """Upload `local_path`, verify its checksum, and return the result.
 
@@ -73,6 +74,10 @@ def upload_file(
     `session` is given the upload can resume a prior interrupted transfer and
     persists its progress URI. Raises :class:`IntegrityError` (after removing the
     bad remote copy) if Drive's md5Checksum doesn't match the local file.
+
+    `should_stop` is polled between chunks; because the session URI is already
+    persisted, stopping is a pause that the next attempt resumes from. It
+    raises :class:`~gstore.drive.rate_limit.Cancelled`.
     """
     path = Path(local_path)
     local_md5 = md5_of_file(path)
@@ -95,7 +100,9 @@ def upload_file(
     response = None
     while response is None:
         try:
-            status, response = execute_with_backoff(request.next_chunk)
+            status, response = execute_with_backoff(
+                request.next_chunk, should_stop=should_stop
+            )
         except HttpError as err:
             if saved_uri and _status_of(err) in _DEAD_SESSION_STATUS:
                 # Session expired/unknown: discard it and restart from scratch.

@@ -35,3 +35,15 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.file_browser, "Files")
         tabs.addTab(self.storage_panel, "Storage")
         self.setCentralWidget(tabs)
+
+    def closeEvent(self, event) -> None:
+        """Stop the tabs' background threads before the widget tree is torn down.
+
+        Qt delivers QCloseEvent only to top-level windows, so the tabs never
+        get one of their own — without this, a running upload QThread is
+        destroyed mid-flight and the process aborts rather than quitting.
+        """
+        if not self.file_browser.prepare_to_close():
+            event.ignore()
+            return
+        super().closeEvent(event)
