@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Callable
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 from gstore.drive.hashing import IntegrityError, verify_file
 from gstore.drive.rate_limit import execute_with_backoff
+from gstore.drive.service import drive_service
 
 _CHUNK_BYTES = 5 * 1024 * 1024  # 5 MB
 
@@ -34,7 +34,7 @@ def download_file(
     mismatch the corrupt file is removed and :class:`IntegrityError` is raised.
     """
     dest = Path(dest_path)
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
     request = service.files().get_media(fileId=drive_file_id)
 
     with open(dest, "wb") as fh:

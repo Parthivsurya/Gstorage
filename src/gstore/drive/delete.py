@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from gstore.drive.rate_limit import execute_with_backoff
+from gstore.drive.service import drive_service
 
 
 def _status_of(err: HttpError) -> int | None:
@@ -23,7 +23,7 @@ def delete_drive_file(credentials: Credentials, drive_file_id: str) -> None:
     quota-reclaiming delete is intended. For files the user merely *viewed* in
     the live scan, prefer :func:`trash_drive_file` (recoverable).
     """
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
     try:
         execute_with_backoff(
             lambda: service.files().delete(fileId=drive_file_id).execute()
@@ -40,7 +40,7 @@ def trash_drive_file(credentials: Credentials, drive_file_id: str) -> None:
     Used by the live-scan delete: acting on the user's whole Drive, a reversible
     trash is far safer than a permanent erase. Requires the full `drive` scope.
     """
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
     try:
         execute_with_backoff(
             lambda: service.files()

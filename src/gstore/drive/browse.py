@@ -14,10 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 
 from gstore.auth.oauth import DRIVE_FULL_SCOPE, DRIVE_READONLY_SCOPE
 from gstore.drive.rate_limit import execute_with_backoff
+from gstore.drive.service import drive_service
 
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 _GOOGLE_NATIVE_PREFIX = "application/vnd.google-apps."
@@ -95,7 +95,7 @@ def list_all_files(credentials: Credentials) -> list[DriveFile]:
     directory. Under `drive.readonly` this is the account's full Drive; under
     `drive.file` it collapses to just the app's own files.
     """
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
     results: list[DriveFile] = []
     page_token: str | None = None
     while True:

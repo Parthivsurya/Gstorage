@@ -13,7 +13,9 @@ import json
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+
+from gstore.drive.service import drive_service
+
 
 from gstore import config
 
@@ -110,6 +112,6 @@ def fetch_account_email(credentials: Credentials) -> str:
     Uses Drive about.get, which returns the user's email under `drive.file`
     without requesting additional identity scopes.
     """
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
     about = service.about().get(fields="user(emailAddress)").execute()
     return about["user"]["emailAddress"]

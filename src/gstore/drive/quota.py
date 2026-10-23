@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 
 from gstore.drive.rate_limit import execute_with_backoff
+from gstore.drive.service import drive_service
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ class CombinedStorage:
 
 def fetch_storage_quota(credentials: Credentials) -> StorageQuota:
     """Read one account's storage quota via Drive about.get."""
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
     about = execute_with_backoff(
         lambda: service.about().get(fields="storageQuota").execute()
     )

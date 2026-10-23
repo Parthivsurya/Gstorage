@@ -16,13 +16,13 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
 from gstore.drive.delete import delete_drive_file
 from gstore.drive.hashing import IntegrityError
 from gstore.drive.placement import ChunkPlan
 from gstore.drive.rate_limit import execute_with_backoff
+from gstore.drive.service import drive_service
 
 _UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024  # resumable transfer granularity per chunk
 
@@ -57,7 +57,7 @@ class ChunkResume(Protocol):
 def _upload_bytes(credentials: Credentials, name: str, data: bytes) -> tuple[str, str]:
     """Upload a bytes payload as one Drive file; verify + return (id, md5)."""
     local_md5 = hashlib.md5(data).hexdigest()
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
     media = MediaIoBaseUpload(
         io.BytesIO(data),
         mimetype="application/octet-stream",

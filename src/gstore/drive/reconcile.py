@@ -9,14 +9,14 @@ missing from the index.
 from __future__ import annotations
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 
 from gstore.drive.rate_limit import execute_with_backoff
+from gstore.drive.service import drive_service
 
 
 def list_app_files(credentials: Credentials) -> dict[str, dict]:
     """Return {drive_file_id: {id, name, size, md5Checksum}} for app files."""
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
     files: dict[str, dict] = {}
     page_token: str | None = None
     while True:

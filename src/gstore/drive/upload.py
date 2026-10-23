@@ -23,13 +23,13 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from gstore.drive.delete import delete_drive_file
 from gstore.drive.hashing import IntegrityError, md5_of_file
 from gstore.drive.rate_limit import execute_with_backoff
+from gstore.drive.service import drive_service
 
 _CHUNK_BYTES = 5 * 1024 * 1024  # 5 MB resumable chunks
 
@@ -76,7 +76,7 @@ def upload_file(
     """
     path = Path(local_path)
     local_md5 = md5_of_file(path)
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    service = drive_service(credentials)
 
     def _new_request():
         media = MediaFileUpload(str(path), resumable=True, chunksize=_CHUNK_BYTES)
