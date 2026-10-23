@@ -19,12 +19,13 @@ assets/Gstore.ico
 # credentials. See README "Bundling the OAuth client".
 src/gstore/auth/client_config.json
 
-# Internal OAuth-verification and CASA notes. These are kept outside the repo
-# (../Gstore-private/verification) because this branch is served publicly by
-# GitHub Pages.
+# Internal OAuth-verification and CASA notes, and the session changelog. Kept
+# outside the repo (../Gstore-private) because this repo is public and this
+# branch is additionally served by GitHub Pages.
 packaging/verification_notes.md
 packaging/google_reply_draft.md
 packaging/casa_kickoff.md
+CHANGES.md
 
 # macOS
 .DS_Store
