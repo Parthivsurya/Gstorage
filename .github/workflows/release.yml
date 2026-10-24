@@ -36,6 +36,8 @@ jobs:
             label: macOS (Apple Silicon)
           - os: windows-latest
             label: Windows
+          - os: ubuntu-latest
+            label: Linux (x86_64)
 
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +45,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # Qt needs these present at build time for PyInstaller to find and bundle
+      # them, and again at run time. The GitHub runner image does not carry
+      # them, and PySide6 fails at import without libEGL in particular.
+      - name: Install Qt's system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libdbus-1-3 libxrandr2 libxi6 libxtst6
 
       - name: Install dependencies
         run: |
@@ -63,6 +78,9 @@ jobs:
           python -c "import json;json.load(open('src/gstore/auth/client_config.json'));print('client config is valid JSON')"
 
       - name: Run the tests
+        env:
+          # No display on a runner; the Qt tests construct real widgets.
+          QT_QPA_PLATFORM: offscreen
         run: |
           python -m pip install pytest
           python -m pytest -q
@@ -96,12 +114,23 @@ jobs:
           # Version-less name: see the macOS step for why.
           Compress-Archive -Path dist/Gstore/* -DestinationPath "dist/Gstore-windows-x64.zip"
 
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # A tarball, not an AppImage: PyInstaller's COLLECT directory already
+          # carries its own Qt, so this runs on any reasonably current distro
+          # without a packaging toolchain in the middle. Preserves the
+          # executable bit, which a zip would not.
+          tar -C dist -czf dist/Gstore-linux-x64.tar.gz Gstore
+          ls -lh dist/Gstore-linux-x64.tar.gz
+
       - uses: actions/upload-artifact@v4
         with:
           name: gstore-${{ runner.os }}-${{ runner.arch }}
           path: |
             dist/*.dmg
             dist/*.zip
+            dist/*.tar.gz
           if-no-files-found: error
 
   release:
@@ -131,6 +160,7 @@ jobs:
           | macOS (Apple Silicon) | [Gstore-macos-arm64.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg) |
           | macOS (Intel) | [Gstore-macos-intel.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-intel.dmg) |
           | Windows 64-bit | [Gstore-windows-x64.zip](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip) |
+          | Linux x86_64 | [Gstore-linux-x64.tar.gz](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-linux-x64.tar.gz) |
 
           Those links always resolve to the newest release.
 
@@ -145,6 +175,13 @@ jobs:
           - **Windows** — SmartScreen shows "Windows protected your PC". Choose
             "More info" -> "Run anyway". Unzip first; run `Gstore.exe` from the
             extracted folder, keeping it next to its files.
+          - **Linux** — no warning, but the Qt libraries need a desktop session.
+            Extract and run the binary, keeping it next to its files:
+
+            ```
+            tar -xzf Gstore-linux-x64.tar.gz
+            ./Gstore/Gstore
+            ```
 
           Gstore asks for your macOS login keychain password once, to store its
           encryption key. Choose "Always Allow" so it does not ask again.
@@ -165,6 +202,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # Qt needs these present at build time for PyInstaller to find and bundle
+      # them, and again at run time. The GitHub runner image does not carry
+      # them, and PySide6 fails at import without libEGL in particular.
+      - name: Install Qt's system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libdbus-1-3 libxrandr2 libxi6 libxtst6
 
       - name: Install dependencies
         run: |
