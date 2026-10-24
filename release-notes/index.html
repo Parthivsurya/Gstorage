@@ -27,12 +27,19 @@
   .ver { font-size:1.05rem; font-weight:600; }
   .date { color:var(--muted); font-size:.9rem; }
   .summary { color:var(--muted); margin:.25rem 0 0; }
+  .masthead { display:flex; align-items:center; gap:.9rem; margin-bottom:.3rem; }
+  .masthead img { width:56px; height:56px; border-radius:12px; flex:none; }
+  .masthead h1 { margin:0; }
+  @media (max-width:28rem) { .masthead img { width:44px; height:44px; } }
   footer { margin-top:2.5rem; color:var(--muted); font-size:.9rem; }
 </style>
 </head>
 <body>
 <main>
+  <div class="masthead">
+  <img src="/assets/gstore_logo_120.png" alt="" width="120" height="120">
   <h1>Gstore release notes</h1>
+</div>
   <p class="sub">Notes for each published version.</p>
   <ul>
     <li>
@@ -43,9 +50,17 @@
         downloads, Linux builds, and in-app update notices.
       </p>
     </li>
+    <li>
+      <div><a class="ver" href="/release-notes/0.0.4.html">0.0.4</a>
+        <span class="date">&middot; 19 October 2026</span></div>
+      <p class="summary">
+        Packaging only: download links that stay put across releases, correct
+        version metadata in the bundles, and the real app icon.
+      </p>
+    </li>
   </ul>
   <p class="sub">
-    Earlier versions have no written notes; see the
+    Versions before 0.0.4 have no written notes; see the
     <a href="https://github.com/Parthivsurya/Gstorage/releases">GitHub releases</a>.
   </p>
   <footer><a href="/">Gstore</a> &middot; <a href="/PRIVACY">Privacy</a></footer>
