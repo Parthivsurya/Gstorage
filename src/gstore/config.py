@@ -119,3 +119,50 @@ def read_bundled_client_config() -> dict | None:
     if not resource.is_file():
         return None
     return json.loads(resource.read_text(encoding="utf-8"))
+
+
+# Update checking.
+#
+# Gstore ships as unsigned downloads, so without this nothing tells an existing
+# user that a newer version exists. It is the only request the app makes to
+# anywhere other than Google — one unauthenticated GET to GitHub's public
+# releases endpoint, carrying no account data — and it is disclosed in
+# PRIVACY.md. Users who would rather it did not happen can switch it off, which
+# leaves a marker file here.
+UPDATE_CHECK_ENV = "GSTORE_NO_UPDATE_CHECK"
+UPDATE_CHECK_FLAG_FILENAME = "update_check.disabled"
+
+
+def update_check_enabled() -> bool:
+    """Whether to ask GitHub for a newer release at startup."""
+    override = os.environ.get(UPDATE_CHECK_ENV)
+    if override is not None:
+        return override.strip().lower() not in _TRUTHY
+    return not (data_dir() / UPDATE_CHECK_FLAG_FILENAME).exists()
+
+
+def set_update_check_enabled(enabled: bool) -> None:
+    """Persist the choice (ignores the env override)."""
+    flag = data_dir() / UPDATE_CHECK_FLAG_FILENAME
+    if enabled:
+        flag.unlink(missing_ok=True)
+    else:
+        flag.touch()
+
+
+# Releases the user has chosen to skip, one version per line, so a declined
+# update does not nag on every launch.
+SKIPPED_VERSIONS_FILENAME = "skipped_versions.txt"
+
+
+def skipped_versions() -> set[str]:
+    path = data_dir() / SKIPPED_VERSIONS_FILENAME
+    if not path.exists():
+        return set()
+    return {line.strip() for line in path.read_text().splitlines() if line.strip()}
+
+
+def skip_version(version: str) -> None:
+    path = data_dir() / SKIPPED_VERSIONS_FILENAME
+    versions = skipped_versions() | {version.strip()}
+    path.write_text("\n".join(sorted(versions)) + "\n")
