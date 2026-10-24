@@ -49,7 +49,8 @@ account, and nothing to sign up for — see the [privacy policy](PRIVACY.md).
 | macOS (Intel) | [Gstore-macos-intel.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-intel.dmg) |
 | Windows 64-bit | [Gstore-windows-x64.zip](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip) |
 
-Those links always resolve to the newest release. Linux has no prebuilt binary
+Those links always resolve to the newest release. What changed in each version is written up in the
+[release notes](https://gstore.iampkb.dev/release-notes/). Linux has no prebuilt binary
 yet — [build from source](#from-source). The Intel macOS build is produced by a
 best-effort CI job and may be missing from a given release; the Apple Silicon
 and Intel builds are not interchangeable.

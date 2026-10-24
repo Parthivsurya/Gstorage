@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gstore 0.1.0 Release Notes</title>
+<meta name="description" content="Release notes for Gstore 0.1.0 — parallel chunked transfers, resumable uploads and downloads, Linux builds, and in-app update notices.">
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1b1f24;
+    --muted: #5b6672;
+    --rule: #e3e7eb;
+    --accent: #2d4f7c;
+    --code-bg: #f4f6f8;
+    --warn-bg: #fff8e6;
+    --warn-rule: #e0c069;
+    --measure: 46rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181c; --fg: #e6e9ec; --muted: #9aa5b1; --rule: #2b3139;
+      --accent: #8fb6e8; --code-bg: #1e232a;
+      --warn-bg: #2a2418; --warn-rule: #6d5a2a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181c; --fg: #e6e9ec; --muted: #9aa5b1; --rule: #2b3139;
+    --accent: #8fb6e8; --code-bg: #1e232a;
+    --warn-bg: #2a2418; --warn-rule: #6d5a2a;
+  }
+
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+    margin: 0; padding-block: 3rem; padding-inline: 1rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: var(--measure); margin: 0 auto; }
+
+  h1 { font-size: 2.1rem; line-height: 1.2; margin: 0 0 .3rem; letter-spacing: -.02em; }
+  h2 {
+    font-size: 1.35rem; margin: 3rem 0 .75rem; padding-top: 1.5rem;
+    border-top: 1px solid var(--rule); letter-spacing: -.01em;
+  }
+  h3 { font-size: 1.05rem; margin: 1.75rem 0 .4rem; }
+  p, li { color: var(--fg); }
+  a { color: var(--accent); }
+
+  .sub { color: var(--muted); margin: 0 0 2rem; }
+  .lede { font-size: 1.1rem; }
+
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .875em;
+  }
+  code { background: var(--code-bg); padding: .12em .35em; border-radius: 3px; }
+  pre {
+    background: var(--code-bg); padding: .9rem 1rem; border-radius: 6px;
+    overflow-x: auto; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .95rem; }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--rule); }
+  th { font-weight: 600; color: var(--muted); font-size: .85rem;
+       text-transform: uppercase; letter-spacing: .04em; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+
+  .downloads { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1.5rem 0 0; }
+  .downloads a {
+    display: inline-block; padding: .55rem .95rem; border-radius: 6px;
+    background: var(--accent); color: #fff; text-decoration: none;
+    font-size: .92rem; font-weight: 500;
+  }
+  :root[data-theme="dark"] .downloads a,
+  :root:not([data-theme="light"]) .downloads a { color: #15181c; }
+  @media (prefers-color-scheme: light) { .downloads a { color: #fff; } }
+
+  .note {
+    background: var(--warn-bg); border-left: 3px solid var(--warn-rule);
+    padding: .85rem 1rem; border-radius: 0 5px 5px 0; margin: 1.25rem 0;
+  }
+  .note p:first-child { margin-top: 0; }
+  .note p:last-child { margin-bottom: 0; }
+
+  .toc { margin: 2rem 0 0; padding: 0; list-style: none; columns: 2; column-gap: 2rem; }
+  .toc li { margin: .2rem 0; break-inside: avoid; }
+  @media (max-width: 34rem) { .toc { columns: 1; } }
+
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
+           color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Gstore 0.1.0</h1>
+<p class="sub">24 October 2026 &middot; previous release <code>0.0.4</code>, 19 October 2026</p>
+
+<p class="lede">
+  This release is almost entirely about moving bytes: transfers now run several
+  chunks at a time, an interrupted transfer resumes in both directions instead
+  of only one, and a dropped connection no longer ends a transfer. There are
+  also Linux builds for the first time, and the app now tells you when a newer
+  version exists.
+</p>
+
+<div class="downloads">
+  <a href="https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg">macOS (Apple Silicon)</a>
+  <a href="https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip">Windows 64-bit</a>
+  <a href="https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-linux-x64.tar.gz">Linux x86_64</a>
+</div>
+
+<ul class="toc">
+  <li><a href="#speed">Transfers are several times faster</a></li>
+  <li><a href="#resume">Interrupted transfers resume</a></li>
+  <li><a href="#reliability">Reliability</a></li>
+  <li><a href="#visibility">Knowing what it is doing</a></li>
+  <li><a href="#memory">Memory</a></li>
+  <li><a href="#linux">Linux builds</a></li>
+  <li><a href="#updates">Update notices</a></li>
+  <li><a href="#upgrading">Upgrading</a></li>
+  <li><a href="#limitations">Known limitations</a></li>
+  <li><a href="#internals">Under the hood</a></li>
+</ul>
+
+<h2 id="speed">Transfers are several times faster</h2>
+
+<p>
+  Chunks used to be sent and fetched one at a time. A single connection to
+  Google is limited far below what a modern link can carry — latency and
+  per-connection limits, not bandwidth — so most of the available capacity
+  sat unused. Gstore now runs several chunks concurrently in both directions.
+</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Direction</th><th>0.0.4</th><th>0.1.0</th><th>Change</th></tr></thead>
+  <tbody>
+    <tr><td>Download</td><td class="num">0.87 MB/s</td><td class="num">3.78 MB/s</td><td><strong>4.3&times;</strong></td></tr>
+    <tr><td>Upload</td><td class="num">0.49 MB/s</td><td class="num">1.20 MB/s</td><td><strong>2.5&times;</strong></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  Both figures come from real transfers against Google Drive on one 5G
+  connection rated 80&nbsp;Mb/s &mdash; the download at 8 streams, the upload at
+  4. They are a single machine on a single link, not a benchmark suite: a
+  wired connection with lower latency will see less benefit, because there was
+  less being wasted to begin with. A 20&nbsp;GB download that had been
+  projected at about four and a half hours finished in 96 minutes.
+</p>
+
+<p>
+  Four concurrent chunks is the default. That is deliberately short of what the
+  link can take, because every stream spends Google Drive API quota and shares
+  a per-user rate limit. Raise it if your quota budget allows:
+</p>
+
+<pre><code>GSTORE_DOWNLOAD_STREAMS=8
+GSTORE_UPLOAD_STREAMS=8</code></pre>
+
+<h2 id="resume">Interrupted transfers resume</h2>
+
+<h3>Downloads</h3>
+<p>
+  In 0.0.4 a chunked download that failed for any reason deleted its output and
+  started over. One timed-out chunk &mdash; number 400 of 409, say &mdash;
+  discarded nineteen gigabytes of finished work.
+</p>
+<p>
+  Output is now accumulated in a <code>.gstore-part</code> file beside the
+  destination and renamed into place only after the whole-file checksum passes,
+  so the destination never holds partial or unverified data. Which chunks
+  arrived is recorded, so the next attempt fetches only what is missing. Choose
+  the same destination again and it carries on.
+</p>
+
+<h3>Uploads</h3>
+<p>
+  Upload resume existed but reported every resumed chunk as being the size of
+  the entire file, which made the progress bar wrong and wrote bad sizes into
+  the index. Stored data was never at risk &mdash; reassembly uses the real
+  bytes and verifies them &mdash; but the bookkeeping was wrong, and it is
+  fixed.
+</p>
+<p>
+  The whole-file checksum is also cached now. Hashing a 20&nbsp;GB file takes
+  minutes, and it used to be repeated on every retry; a resumed upload skips
+  it entirely.
+</p>
+
+<h2 id="reliability">Reliability</h2>
+
+<h3>A dropped connection no longer ends a transfer</h3>
+<p>
+  Retries previously covered rate limits and server errors, but not the most
+  common failure of all: the network going away. A timeout or a reset
+  connection ended the whole transfer. Transport errors now retry with the same
+  exponential backoff, so a brief blip recovers on its own.
+</p>
+
+<h3>Cancelling, and quitting</h3>
+<p>
+  Transfers can be cancelled, and cancelling is a <em>pause</em> &mdash; what
+  has already moved is kept, and repeating the transfer continues from there.
+</p>
+<p>
+  Quitting during a transfer previously destroyed a running thread and aborted
+  the process. Gstore now asks whether to pause and quit, and stops cleanly.
+</p>
+
+<h3>Guards against bad data</h3>
+<ul>
+  <li>A file truncated or shrunk mid-upload is refused rather than silently
+      uploading a short chunk nobody notices until download time.</li>
+  <li>A download that cannot fit on the destination disk is refused before
+      anything is fetched, counting only what is left to fetch so a
+      nearly-complete resume is not turned away.</li>
+  <li>A part file that does not line up with a chunk boundary is discarded
+      rather than being built on.</li>
+</ul>
+
+<h2 id="visibility">Knowing what it is doing</h2>
+
+<p>The transfer line now reads, for example:</p>
+<pre><code>Downloaded 212 of 409 chunks… 52% · 10.4 GB of 20.0 GB · 3.1 MB/s · 52m left</code></pre>
+
+<p>
+  Percentage, byte counts, current speed and an estimate, plus how many chunks
+  are done. The speed is measured over a trailing window, so it reflects what
+  the connection is doing now rather than an average dragged around by an early
+  slow patch, and a resumed transfer is not credited with work a previous run
+  did.
+</p>
+<p>
+  On macOS the percentage had never been visible at all: the native Qt style
+  paints a progress bar's fill but never its text, whatever the widget reports.
+  It now lives in the label beside the bar, where it renders everywhere.
+</p>
+
+<h3>A log file</h3>
+<p>
+  Gstore had no logging. A failed 20&nbsp;GB download reported only
+  <code>timed out</code>, naming neither the chunk nor how far it had got.
+  There is now a rotating log beside the index:
+</p>
+<pre><code>macOS   ~/Library/Application Support/Gstore/gstore.log
+Linux   ~/.local/share/Gstore/gstore.log
+Windows %LOCALAPPDATA%\Gstore\gstore.log</code></pre>
+<p>Failures name the chunk, the account and the error.</p>
+
+<h2 id="memory">Memory</h2>
+<p>
+  Each chunk used to be read whole and then copied into a buffer &mdash; about
+  100&nbsp;MB resident per chunk, to move data that is only ever sent 5&nbsp;MB
+  at a time. Chunks are now streamed straight from the file. Measured on a
+  50&nbsp;MB chunk, peak memory fell from 152&nbsp;MB to 62&nbsp;MB, most of the
+  remainder being the Python interpreter itself.
+</p>
+<p>
+  Downloads write directly into the output file at each chunk's offset, so a
+  20&nbsp;GB download occupies 20&nbsp;GB on disk, not 40, and finishing is a
+  rename rather than a copy.
+</p>
+
+<h2 id="linux">Linux builds</h2>
+<p>
+  Linux users previously had only a source checkout, which cannot sign in
+  because the bundled OAuth client is not in the repository. There is now a
+  tarball carrying its own Qt, so it runs on any reasonably current
+  distribution:
+</p>
+<pre><code>tar -xzf Gstore-linux-x64.tar.gz
+./Gstore/Gstore</code></pre>
+
+<div class="note">
+  <p>
+    <strong>Untested on a real desktop.</strong> The Linux build compiles and
+    its tests pass headless in CI, but nobody has yet launched the GUI on an
+    actual Linux machine. If it misbehaves, the log file above is the place to
+    look, and an issue would be welcome.
+  </p>
+</div>
+
+<h2 id="updates">Update notices</h2>
+<p>
+  Gstore is distributed as a direct download rather than through an app store,
+  so nothing told you when a new version appeared. At startup it now asks
+  GitHub's public releases endpoint whether a newer version exists and, if so,
+  shows a strip above the tabs offering the release notes and the download
+  page.
+</p>
+<p>
+  Nothing is downloaded or installed automatically; the buttons only open your
+  browser. The request carries no account information, no file names, no email
+  address, no tokens and no identifier of any kind. It is the only request
+  Gstore makes to anywhere other than Google, it is described in the
+  <a href="/PRIVACY">privacy policy</a>, and it can be switched off:
+</p>
+<pre><code>GSTORE_NO_UPDATE_CHECK=1</code></pre>
+<p>
+  &hellip; or by creating a file named <code>update_check.disabled</code> in
+  Gstore's application-data directory. With it off, the app contacts nothing
+  but Google.
+</p>
+
+<div class="note">
+  <p>
+    <strong>This release cannot announce itself.</strong> The update check ships
+    <em>in</em> 0.1.0, so anyone on 0.0.4 will not be told about it. It begins
+    working for the release after this one.
+  </p>
+</div>
+
+<h2 id="upgrading">Upgrading</h2>
+<p>
+  Nothing to do beyond installing the new build. The local index migrates
+  itself on first launch, linked accounts and indexed files are untouched, and
+  a part-finished transfer from 0.0.4 is picked up rather than discarded.
+</p>
+<p>
+  These builds are not code-signed, so the first launch warns you. On macOS,
+  open System&nbsp;Settings &rarr; Privacy &amp; Security and choose
+  <em>Open Anyway</em>. On Windows, SmartScreen offers
+  <em>More info</em> &rarr; <em>Run anyway</em>.
+</p>
+
+<h2 id="limitations">Known limitations</h2>
+<ul>
+  <li>
+    <strong>No code signing or notarization.</strong> Every platform warns on
+    first launch.
+  </li>
+  <li>
+    <strong>The Intel macOS build is best-effort.</strong> Those runners are
+    often unschedulable, and the release ships without that asset when one is
+    not available. Apple Silicon and Intel builds are not interchangeable.
+  </li>
+  <li>
+    <strong>A chunk needs one account with room for the whole chunk.</strong>
+    Pooled free space spread thinly across many accounts will not place a file,
+    even when the total would fit.
+  </li>
+  <li>
+    <strong>A fresh chunked upload reads the file twice</strong> &mdash; once to
+    checksum it, once to send it. Resumed uploads skip the first pass; fresh
+    ones do not yet.
+  </li>
+  <li>
+    <strong>Uploads benefit less from concurrency than downloads</strong>
+    (2.5&times; against 4.3&times;), and that figure comes from a 48&nbsp;MB
+    sample rather than a long transfer.
+  </li>
+</ul>
+
+<h2 id="internals">Under the hood</h2>
+<ul>
+  <li>The test suite grew from 52 tests to 190, with the chunked-upload and
+      chunked-download paths covered for the first time.</li>
+  <li>The index schema is at version 9; migrations run automatically.</li>
+  <li>Positional file I/O goes through a small portability layer, because the
+      syscalls that make concurrent transfers safe on macOS and Linux do not
+      exist on Windows.</li>
+</ul>
+
+<footer>
+  <p>
+    <a href="https://github.com/Parthivsurya/Gstorage/releases/tag/v0.1.0">Release on GitHub</a>
+    &middot; <a href="https://github.com/Parthivsurya/Gstorage/compare/v0.0.4...v0.1.0">Full diff from 0.0.4</a>
+    &middot; <a href="/">Gstore</a>
+    &middot; <a href="/PRIVACY">Privacy</a>
+  </p>
+</footer>
+
+</main>
+</body>
+</html>
