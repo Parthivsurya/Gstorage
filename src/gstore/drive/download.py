@@ -14,9 +14,12 @@ from typing import Callable
 from google.oauth2.credentials import Credentials
 from googleapiclient.http import MediaIoBaseDownload
 
+from gstore.applog import get as get_logger
 from gstore.drive.hashing import IntegrityError, verify_file
 from gstore.drive.rate_limit import execute_with_backoff
 from gstore.drive.service import drive_service
+
+log = get_logger(__name__)
 
 _CHUNK_BYTES = 5 * 1024 * 1024  # 5 MB
 
@@ -49,6 +52,7 @@ def download_file(
         try:
             verify_file(dest, expected_md5)
         except IntegrityError:
+            log.error("checksum mismatch for %s; removing", dest.name)
             dest.unlink(missing_ok=True)  # don't leave corrupt data behind
             raise
 
