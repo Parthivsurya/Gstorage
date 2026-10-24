@@ -6,17 +6,25 @@ _UNITS = ["B", "KB", "MB", "GB", "TB", "PB"]
 
 
 def human_bytes(n: int | None) -> str:
-    """Human-readable size (base-1024). None renders as an infinity sign."""
+    """Human-readable size (base-1024). None renders as an infinity sign.
+
+    Scales on magnitude so a negative never silently renders as raw bytes.
+    Sizes are not meaningfully negative, but one arrived once — a 64-bit total
+    truncated by a 32-bit Qt signal — and "-62718 B of -32064175 B" read as
+    gibberish rather than as the bug it was.
+    """
     if n is None:
         return "∞"
     value = float(n)
+    sign = "-" if value < 0 else ""
+    value = abs(value)
     for unit in _UNITS:
         if value < 1024.0 or unit == _UNITS[-1]:
             if unit == "B":
-                return f"{int(value)} {unit}"
-            return f"{value:.1f} {unit}"
+                return f"{sign}{int(value)} {unit}"
+            return f"{sign}{value:.1f} {unit}"
         value /= 1024.0
-    return f"{value:.1f} PB"  # unreachable; keeps type checkers happy
+    return f"{sign}{value:.1f} PB"  # unreachable; keeps type checkers happy
 
 
 def human_duration(seconds: float | None) -> str:

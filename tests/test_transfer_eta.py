@@ -149,3 +149,40 @@ def test_human_duration_handles_nan():
 )
 def test_human_rate(rate, expected):
     assert human_rate(rate) == expected
+
+
+# -- 64-bit sizes ------------------------------------------------------------
+
+
+def test_a_twenty_gigabyte_total_survives_the_signal():
+    """Regression: Signal(int) is a 32-bit C++ int and truncated the total.
+
+    19.97 GB (21,442,772,305) wrapped to -32,064,175, and the label read
+    "-62718 B of -32064175 B".
+    """
+    from gstore.ui.download_worker import DownloadWorker
+
+    received: list[int] = []
+    worker = DownloadWorker(1, "/tmp/unused")
+    worker.total_bytes.connect(received.append)
+    worker.total_bytes.emit(21_442_772_305)
+
+    assert received == [21_442_772_305]
+
+
+def test_eta_is_sane_for_a_twenty_gigabyte_download(browser):
+    total = 21_442_772_305
+    browser._begin_transfer("Downloading…", determinate=True, total_bytes=None)
+    browser._set_transfer_total(total)
+    browser._on_transfer_progress(0.002)
+
+    text = browser.transfer_status.text()
+    assert "20.0 GB" in text
+    assert "-" not in text.replace("—", "")  # no negative byte counts
+
+
+def test_human_bytes_scales_negatives_instead_of_dumping_raw_bytes():
+    from gstore.format import human_bytes
+
+    assert human_bytes(-32_064_175) == "-30.6 MB"
+    assert human_bytes(21_442_772_305) == "20.0 GB"

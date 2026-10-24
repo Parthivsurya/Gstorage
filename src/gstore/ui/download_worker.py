@@ -26,7 +26,11 @@ class DownloadWorker(QThread):
     # Paused rather than failed: the part file is kept and resumes.
     cancelled = Signal()
     # Total bytes, once known, so the UI can show a rate and an ETA.
-    total_bytes = Signal(int)
+    #
+    # qint64, not int: Qt maps Signal(int) to a 32-bit C++ int, so a 19.97 GB
+    # total (21,442,772,305) wrapped to -32,064,175 and the label read
+    # "-62718 B of -32064175 B". Any byte count crossing a signal needs 64 bits.
+    total_bytes = Signal("qint64")
 
     def __init__(self, file_id: int, dest_path: str, parent=None) -> None:
         super().__init__(parent)
