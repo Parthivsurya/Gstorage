@@ -26,7 +26,7 @@ from gstore.applog import get as get_logger
 from gstore.drive.delete import delete_drive_file
 from gstore.drive.hashing import IntegrityError
 from gstore.drive.placement import ChunkPlan
-from gstore.drive.positional_io import pread
+from gstore.drive.positional_io import open_binary, pread
 from gstore.drive.rate_limit import Cancelled, execute_with_backoff
 from gstore.drive.service import drive_service
 
@@ -274,7 +274,7 @@ def upload_chunks(
             inflight = sum(partial.values())
         on_progress(min((done_bytes + inflight) / total, 1.0))
 
-    fd = os.open(path, os.O_RDONLY)
+    fd = open_binary(path)
     try:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             queue = iter(ordered)

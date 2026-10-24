@@ -23,6 +23,17 @@ import threading
 
 HAS_POSITIONAL_IO = hasattr(os, "pread") and hasattr(os, "pwrite")
 
+# Windows opens descriptors in TEXT mode unless told otherwise, translating
+# CRLF on the way through — which silently corrupts binary data and every
+# checksum computed over it. O_BINARY does not exist elsewhere, where the
+# behaviour is already binary.
+_BINARY = getattr(os, "O_BINARY", 0)
+
+
+def open_binary(path, flags: int = os.O_RDONLY) -> int:
+    """Open a descriptor for binary positional I/O, on any platform."""
+    return os.open(path, flags | _BINARY)
+
 # One lock for the whole process. Contention is irrelevant: it is held only
 # for a read or write into a buffer, never across a network request.
 _fallback_lock = threading.Lock()

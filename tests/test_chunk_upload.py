@@ -15,6 +15,7 @@ raises on failure).
 from __future__ import annotations
 
 import hashlib
+import os
 import socket
 import threading
 import ssl
@@ -457,48 +458,66 @@ def test_cancel_is_noticed_without_waiting_out_the_backoff():
 # -- the streaming slice ------------------------------------------------------
 
 
-def _slice_over(tmp_path, data: bytes, offset: int, length: int):
-    p = tmp_path / "s.bin"
-    p.write_bytes(data)
-    import os as _os
+@pytest.fixture
+def slice_over(tmp_path):
+    """Build an _FdSlice and guarantee the descriptor is closed.
 
-    return chunk_upload._FdSlice(_os.open(p, _os.O_RDONLY), offset, length)
+    A leaked descriptor is invisible on Unix but stops Windows deleting the
+    file, so pytest's tmp_path teardown fails and takes the test with it.
+    """
+    from gstore.drive.positional_io import open_binary
+
+    opened: list[int] = []
+
+    def build(data: bytes, offset: int, length: int):
+        path = tmp_path / "s.bin"
+        path.write_bytes(data)
+        fd = open_binary(path)
+        opened.append(fd)
+        return chunk_upload._FdSlice(fd, offset, length)
+
+    yield build
+    for fd in opened:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
-def test_slice_reads_only_its_own_range(tmp_path):
+def test_slice_reads_only_its_own_range(slice_over):
     data = bytes(range(256))
-    sl = _slice_over(tmp_path, data, offset=10, length=20)
+    sl = slice_over(data, offset=10, length=20)
     assert sl.read() == data[10:30]
 
 
-def test_slice_reports_its_length_as_the_file_size(tmp_path):
+def test_slice_reports_its_length_as_the_file_size(slice_over):
     """MediaIoBaseUpload sizes the upload with seek(0, SEEK_END) + tell()."""
-    sl = _slice_over(tmp_path, bytes(range(256)), offset=10, length=20)
+    sl = slice_over(bytes(range(256)), offset=10, length=20)
     import os as _os
 
     sl.seek(0, _os.SEEK_END)
     assert sl.tell() == 20
 
 
-def test_slice_never_reads_past_its_end(tmp_path):
+def test_slice_never_reads_past_its_end(slice_over):
     data = bytes(range(256))
-    sl = _slice_over(tmp_path, data, offset=200, length=56)
+    sl = slice_over(data, offset=200, length=56)
     assert len(sl.read(999)) == 56  # asked for more than the slice holds
     assert sl.read(10) == b""  # and then it is exhausted
 
 
-def test_slice_supports_random_access(tmp_path):
+def test_slice_supports_random_access(slice_over):
     """getbytes() seeks to an absolute position and reads from there."""
     data = bytes(range(256))
-    sl = _slice_over(tmp_path, data, offset=100, length=100)
+    sl = slice_over(data, offset=100, length=100)
     sl.seek(30)
     assert sl.read(10) == data[130:140]
     sl.seek(0)
     assert sl.read(5) == data[100:105]
 
 
-def test_slice_clamps_out_of_range_seeks(tmp_path):
-    sl = _slice_over(tmp_path, bytes(range(256)), offset=0, length=10)
+def test_slice_clamps_out_of_range_seeks(slice_over):
+    sl = slice_over(bytes(range(256)), offset=0, length=10)
     assert sl.seek(-5) == 0
     assert sl.seek(999) == 10
 
@@ -511,7 +530,9 @@ def test_chunk_is_never_held_in_memory(tmp_path):
     path, _data = _write(tmp_path, size)
 
     biggest = 0
-    fd = _os.open(path, _os.O_RDONLY)
+    from gstore.drive.positional_io import open_binary
+
+    fd = open_binary(path)
     try:
         sl = chunk_upload._FdSlice(fd, 0, size)
         while True:

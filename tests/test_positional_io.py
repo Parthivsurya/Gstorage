@@ -19,7 +19,7 @@ import threading
 import pytest
 
 from gstore.drive import positional_io
-from gstore.drive.positional_io import pread, pwrite
+from gstore.drive.positional_io import open_binary, pread, pwrite
 
 
 @pytest.fixture(params=["native", "fallback"])
@@ -38,7 +38,7 @@ def datafile(tmp_path):
 
 
 def test_reads_the_requested_range(mode, datafile):
-    fd = os.open(datafile, os.O_RDONLY)
+    fd = open_binary(datafile)
     try:
         assert pread(fd, 10, 0) == bytes(range(10))
         assert pread(fd, 4, 256) == bytes(range(4))  # pattern repeats
@@ -48,7 +48,7 @@ def test_reads_the_requested_range(mode, datafile):
 
 def test_reading_does_not_move_the_file_position(mode, datafile):
     """The whole point: a worker's read must not disturb another's."""
-    fd = os.open(datafile, os.O_RDONLY)
+    fd = open_binary(datafile)
     try:
         os.lseek(fd, 100, os.SEEK_SET)
         pread(fd, 10, 4000)
@@ -63,7 +63,7 @@ def test_reading_does_not_move_the_file_position(mode, datafile):
 def test_writes_land_at_the_offset(mode, tmp_path):
     path = tmp_path / "out.bin"
     path.write_bytes(b"\x00" * 100)
-    fd = os.open(path, os.O_RDWR)
+    fd = open_binary(path, os.O_RDWR)
     try:
         pwrite(fd, b"abc", 10)
         pwrite(fd, b"xyz", 50)
@@ -76,7 +76,7 @@ def test_writes_land_at_the_offset(mode, tmp_path):
 
 
 def test_a_short_file_reads_short_rather_than_raising(mode, datafile):
-    fd = os.open(datafile, os.O_RDONLY)
+    fd = open_binary(datafile)
     try:
         assert pread(fd, 5000, datafile.stat().st_size - 10) == datafile.read_bytes()[-10:]
     finally:
@@ -93,7 +93,7 @@ def test_concurrent_reads_never_return_another_thread_s_bytes(mode, tmp_path):
     path = tmp_path / "big.bin"
     path.write_bytes(b"".join(bytes([i]) * chunk for i in range(threads)))
 
-    fd = os.open(path, os.O_RDONLY)
+    fd = open_binary(path)
     wrong: list[int] = []
     barrier = threading.Barrier(threads)
 
@@ -121,7 +121,7 @@ def test_concurrent_writes_do_not_overwrite_each_other(mode, tmp_path):
     path = tmp_path / "out.bin"
     path.write_bytes(b"\x00" * (chunk * threads))
 
-    fd = os.open(path, os.O_RDWR)
+    fd = open_binary(path, os.O_RDWR)
     barrier = threading.Barrier(threads)
 
     def worker(index: int) -> None:
@@ -149,7 +149,7 @@ def test_the_fallback_is_used_when_the_syscalls_are_missing(monkeypatch, datafil
     monkeypatch.delattr(os, "pread", raising=False)
     monkeypatch.delattr(os, "pwrite", raising=False)
 
-    fd = os.open(datafile, os.O_RDONLY)
+    fd = open_binary(datafile)
     try:
         assert pread(fd, 8, 0) == bytes(range(8))  # would AttributeError before
     finally:
