@@ -37,6 +37,7 @@ from gstore.drive.chunk_download import (
 from gstore.drive.hashing import IntegrityError
 from gstore.drive.rate_limit import Cancelled
 from gstore.index import Chunk
+from gstore.drive.positional_io import pwrite
 from gstore.index.download_progress import DownloadProgress
 
 CHUNK = 64 * 1024
@@ -91,7 +92,7 @@ def cloud(monkeypatch):
             if state["fail_seq"] is not None and chunk.sequence == state["fail_seq"]:
                 raise socket.timeout("timed out")
             data = state["store"][chunk.drive_file_id]
-            os.pwrite(fd, data, offset)
+            pwrite(fd, data, offset)
             with state["lock"]:
                 state["fetched"].append(chunk.sequence)
             return len(data)

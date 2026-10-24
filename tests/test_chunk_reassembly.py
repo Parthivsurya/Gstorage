@@ -53,7 +53,7 @@ def fake_download(monkeypatch):
     store: dict[str, bytes] = {}
 
     def _fake(credentials, chunk, fd, offset, should_stop=None):
-        import os as _os
+        from gstore.drive.positional_io import pwrite
 
         if should_stop is not None and should_stop():
             from gstore.drive.rate_limit import Cancelled
@@ -62,7 +62,7 @@ def fake_download(monkeypatch):
         data = store[chunk.drive_file_id]
         if chunk.md5 and _md5(data) != chunk.md5:
             raise IntegrityError(f"chunk {chunk.sequence}: checksum mismatch")
-        _os.pwrite(fd, data, offset)
+        pwrite(fd, data, offset)
         return len(data)
 
     monkeypatch.setattr(chunk_download, "_fetch_chunk", _fake)
