@@ -5,17 +5,28 @@ from __future__ import annotations
 from PySide6.QtCore import QThread, Signal
 from google.auth.exceptions import RefreshError
 
+from gstore.applog import get as get_logger
 from gstore.auth.accounts import AccountStore
 from gstore.db import Database
-from gstore.drive.chunk_download import download_chunks
+from gstore.drive.chunk_download import NotEnoughSpace, download_chunks
 from gstore.drive.download import download_file
+from gstore.drive.rate_limit import Cancelled
 from gstore.index import IndexStore
+
+log = get_logger(__name__)
 
 
 class DownloadWorker(QThread):
     progress = Signal(float)  # 0.0 - 1.0
     succeeded = Signal(str)  # destination path
     failed = Signal(str)
+    # Phase text, e.g. "Downloading chunk 212 of 409" — a bare percentage says
+    # nothing about where a 409-chunk reassembly actually is.
+    status = Signal(str)
+    # Paused rather than failed: the part file is kept and resumes.
+    cancelled = Signal()
+    # Total bytes, once known, so the UI can show a rate and an ETA.
+    total_bytes = Signal(int)
 
     def __init__(self, file_id: int, dest_path: str, parent=None) -> None:
         super().__init__(parent)
@@ -49,6 +60,8 @@ class DownloadWorker(QThread):
                 )
                 return
 
+            if entry.size_bytes:
+                self.total_bytes.emit(entry.size_bytes)
             download_file(
                 credentials,
                 entry.drive_file_id,
@@ -57,8 +70,13 @@ class DownloadWorker(QThread):
                 expected_md5=entry.md5,
             )
             self.succeeded.emit(self.dest_path)
-        except Exception as exc:
+        except Cancelled:
+            self.cancelled.emit()
+        except NotEnoughSpace as exc:
             self.failed.emit(str(exc))
+        except Exception as exc:
+            log.exception("download of file %s failed", self.file_id)
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
         finally:
             db.close()
 
@@ -74,6 +92,13 @@ class DownloadWorker(QThread):
                 creds_cache[account_id] = creds
             return creds
 
+        total = sum(c.size_bytes for c in chunks)
+        if total:
+            self.total_bytes.emit(total)
+
+        def announce(number: int, count: int) -> None:
+            self.status.emit(f"Downloading chunk {number} of {count}…")
+
         try:
             download_chunks(
                 chunks,
@@ -81,6 +106,8 @@ class DownloadWorker(QThread):
                 self.dest_path,
                 expected_md5=entry.md5 if entry else None,
                 on_progress=self.progress.emit,
+                on_chunk=announce,
+                should_stop=self.isInterruptionRequested,
             )
         except RefreshError:
             self.failed.emit(

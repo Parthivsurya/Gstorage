@@ -410,27 +410,28 @@ class FileBrowser(QWidget):
 
         Returns False if the user chose not to quit after all.
         """
-        upload = self._upload_worker
-        if upload is not None and upload.isRunning():
+        transfer = self._upload_worker or self._download_worker
+        kind = "upload" if self._upload_worker is not None else "download"
+        if transfer is not None and transfer.isRunning():
             answer = QMessageBox.question(
                 self,
-                "Upload in progress",
-                "An upload is still running.\n\n"
-                "Quitting pauses it — nothing already uploaded is lost, and "
-                "choosing the same file again will carry on from here.\n\n"
-                "Pause the upload and quit?",
+                f"{kind.capitalize()} in progress",
+                f"A {kind} is still running.\n\n"
+                f"Quitting pauses it — nothing already transferred is lost, and "
+                f"repeating the same {kind} will carry on from here.\n\n"
+                f"Pause the {kind} and quit?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return False
-            upload.requestInterruption()
-            if not upload.wait(15000):
+            transfer.requestInterruption()
+            if not transfer.wait(15000):
                 # Stuck in a socket read the timeout hasn't tripped yet. Killing
                 # the thread is ugly, but far better than aborting the process,
                 # and the staged chunks are already committed to the database.
-                upload.terminate()
-                upload.wait(2000)
+                transfer.terminate()
+                transfer.wait(2000)
 
         # Auto-starts on every Gallery render, so it may be mid-fetch at quit.
         thumbs = self._thumb_worker
@@ -722,8 +723,12 @@ class FileBrowser(QWidget):
         self.cancel_button.setVisible(True)
         worker.start()
 
+    def _set_transfer_total(self, total: int) -> None:
+        """Learn the size mid-flight, when only the worker knows it."""
+        self._transfer_total = total or None
+
     def _on_cancel_upload(self) -> None:
-        worker = self._upload_worker
+        worker = self._upload_worker or self._download_worker
         if worker is None or not worker.isRunning():
             return
         # The worker checks between chunks and during retry backoff, so this is
@@ -808,14 +813,21 @@ class FileBrowser(QWidget):
         dest, _ = QFileDialog.getSaveFileName(self, "Save file as", entry.name)
         if not dest:
             return
-        self._begin_transfer("Downloading…", determinate=True)
+        self._begin_transfer(
+            "Downloading…", determinate=True, total_bytes=entry.size_bytes or None
+        )
 
         worker = DownloadWorker(entry.id, dest, self)
         worker.progress.connect(self._on_transfer_progress)
         worker.succeeded.connect(self._on_download_succeeded)
         worker.failed.connect(self._on_download_failed)
+        worker.status.connect(self._set_transfer_message)
+        worker.total_bytes.connect(self._set_transfer_total)
+        worker.cancelled.connect(self._on_download_cancelled)
         worker.finished.connect(self._on_download_finished)
         self._download_worker = worker
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setVisible(True)
         worker.start()
 
     def _download_scan_row(self) -> None:
@@ -840,11 +852,22 @@ class FileBrowser(QWidget):
 
     def _on_download_failed(self, message: str) -> None:
         self.transfer_status.setText("")
-        QMessageBox.warning(self, "Download failed", message)
+        QMessageBox.warning(
+            self,
+            "Download failed",
+            f"{message}\n\nWhat was already downloaded is kept — choosing the "
+            "same destination again continues from there.",
+        )
+
+    def _on_download_cancelled(self) -> None:
+        self.transfer_status.setText(
+            "Download paused — choose the same destination again to carry on."
+        )
 
     def _on_download_finished(self) -> None:
         self._download_worker = None
         self.transfer_bar.setVisible(False)
+        self.cancel_button.setVisible(False)
         self._update_buttons()
 
     def _on_drive_download_finished(self) -> None:
