@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gstore: pool your own Google accounts into one drive</title>
+<meta name="description" content="Gstore is a local desktop app that links your own Google accounts and presents their free storage as a single space. No backend, no telemetry.">
+<meta name="theme-color" content="#f6f7f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1319" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Gstore">
+<meta property="og:title" content="Gstore: pool your own Google accounts into one drive">
+<meta property="og:description" content="A local desktop app that links your own Google accounts and presents their free storage as a single space. No backend, no telemetry.">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="assets/gstore_favicon_32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="assets/gstore_apple_touch_icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="nav__in">
+    <span class="brand">
+      <img class="mark" src="assets/gstore_logo_256.png" alt="" width="26" height="26" decoding="async">
+      <span class="brand__name">Gstore</span>
+    </span>
+    <nav class="nav__links" aria-label="Page sections">
+      <a href="#how">How it works</a>
+      <a href="#download">Download</a>
+      <a href="#first-launch">First launch</a>
+      <a href="#privacy">Privacy</a>
+    </nav>
+    <a class="btn btn--ghost btn--sm" href="https://github.com/Parthivsurya/Gstorage">View source</a>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="hero">
+    <div class="wrap hero__in">
+      <div class="hero__copy">
+        <img class="hero__logo" src="assets/gstore_logo_256.png"
+             srcset="brand/logo-256.png 256w, brand/logo-512.png 512w" sizes="96px"
+             alt="" width="96" height="96" fetchpriority="high">
+        <h1>Pool your Google accounts into one drive.</h1>
+        <p class="lede">Gstore links the accounts you already own and presents their free space as a single store on your desktop.</p>
+        <p class="cta">
+          <a class="btn btn--primary" href="#download">Download</a>
+          <a class="btn btn--ghost" href="https://github.com/Parthivsurya/Gstorage">View source</a>
+        </p>
+      </div>
+
+      <figure class="pool">
+        <div class="pool__head">
+          <span class="pool__total"><span class="pool__num">45</span> GB</span>
+          <span class="pool__label">one combined space</span>
+        </div>
+        <ul class="pool__rows">
+          <li class="prow">
+            <span class="prow__name">personal</span>
+            <span class="prow__val">15 GB</span>
+            <span class="track"><span class="track__fill" style="width:33.3%"></span></span>
+          </li>
+          <li class="prow">
+            <span class="prow__name">college</span>
+            <span class="prow__val">15 GB</span>
+            <span class="track"><span class="track__fill" style="width:33.3%"></span></span>
+          </li>
+          <li class="prow">
+            <span class="prow__name">old backup</span>
+            <span class="prow__val">15 GB</span>
+            <span class="track"><span class="track__fill" style="width:33.3%"></span></span>
+          </li>
+          <li class="prow prow--sum">
+            <span class="prow__name">pooled by Gstore</span>
+            <span class="prow__val">45 GB</span>
+            <span class="track"><span class="track__fill" style="width:100%"></span></span>
+          </li>
+        </ul>
+        <figcaption class="pool__cap">Example: three of your own accounts on Google's free 15 GB tier. Gstore reads the real quota of each one.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="how" id="how">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li class="step">
+          <span class="step__n">1</span>
+          <h3>Link your accounts</h3>
+          <p>Sign in to each Google account you own and want to use. Two or more is where this starts to pay off.</p>
+        </li>
+        <li class="step">
+          <span class="step__n">2</span>
+          <h3>Gstore reads each quota</h3>
+          <p>It asks Google how much space every linked account has and how much is still free, then adds them up.</p>
+        </li>
+        <li class="step">
+          <span class="step__n">3</span>
+          <h3>Uploads spread out</h3>
+          <p>New files go to an account with room. A file too big for any single account is split into chunks across several.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="dl" id="download">
+    <div class="wrap">
+      <h2>Download</h2>
+      <p class="dl__meta">This is early software, so expect rough edges. Runs on macOS 11 or later, 64-bit Windows, or 64-bit Linux.</p>
+
+      <p class="dl__count" id="dl-count" hidden>
+        <span class="dl__count-num" id="dl-count-num"></span>
+        <span class="dl__count-label">downloads so far</span>
+      </p>
+
+      <div class="platforms" id="platforms">
+        <div class="platform platform--macos">
+          <h3>macOS <span class="detected">looks like your platform</span></h3>
+          <p class="platform__note">The two Mac builds are not interchangeable, and the wrong one will not run. If you are not sure which chip you have, check the Apple menu, then About This Mac.</p>
+          <ul class="assets">
+            <li>
+              <a class="asset" href="https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg">
+                <span class="asset__name">Download for Apple silicon</span>
+                <span class="asset__hint">.dmg, M1 and later</span>
+              </a>
+            </li>
+            <li>
+              <a class="asset" href="https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-intel.dmg">
+                <span class="asset__name">Download for Intel</span>
+                <span class="asset__hint">.dmg, Intel Macs</span>
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <div class="platform platform--windows">
+          <h3>Windows <span class="detected">looks like your platform</span></h3>
+          <p class="platform__note">64-bit Windows 10 and 11. There is no 32-bit build, and no installer: you unzip it and run it.</p>
+          <ul class="assets">
+            <li>
+              <a class="asset" href="https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip">
+                <span class="asset__name">Download for Windows</span>
+                <span class="asset__hint">.zip, 64-bit</span>
+              </a>
+            </li>
+          </ul>
+        </div>
+      
+
+        <div class="platform platform--linux">
+          <h3>Linux <span class="detected">looks like your platform</span></h3>
+          <p class="platform__note">A tarball carrying its own Qt, so it runs on most current distributions without installing anything else. Keep the binary beside its files.</p>
+          <ul class="assets">
+            <li>
+              <a class="asset" href="https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-linux-x64.tar.gz">
+                <span class="asset__name">Download for Linux</span>
+                <span class="asset__hint">.tar.gz, 64-bit x86</span>
+              </a>
+            </li>
+          </ul>
+        </div></div>
+
+      <p class="dl__fine">Each button downloads the current build straight from GitHub. Older versions, checksums and release notes are on the <a href="https://github.com/Parthivsurya/Gstorage/releases">releases page</a>. You will also need the Google accounts you want to pool; Gstore does not create accounts for you.</p>
+    </div>
+  </section>
+
+  <section class="fl" id="first-launch">
+    <div class="wrap">
+      <h2>First launch</h2>
+      <p class="fl__lede">Neither build is signed with a paid Apple or Microsoft developer certificate, so both systems will warn you the first time you open Gstore. The source is public instead, so anyone can read what goes into a build. Here is what you will see, and what to do about it.</p>
+
+      <div class="fl__cols">
+        <div class="fl__col">
+          <h3>macOS</h3>
+          <ol class="plain">
+            <li>Open the <code>.dmg</code> and drag Gstore into Applications.</li>
+            <li>Open it. macOS blocks the first launch and says it cannot check the app for malicious software.</li>
+            <li>Go to System Settings, then Privacy &amp; Security. Scroll to the notice about Gstore and click <strong>Open Anyway</strong>.</li>
+            <li>Gstore then asks for your login keychain password once, so it can store its encryption key there. Choose <strong>Always Allow</strong> and it stops asking.</li>
+          </ol>
+          <p class="aside">Recent macOS versions removed the old right-click and Open shortcut, so the Privacy &amp; Security panel is the only way through.</p>
+        </div>
+
+        <div class="fl__col">
+          <h3>Windows</h3>
+          <ol class="plain">
+            <li>Unzip the folder, then keep it in one piece.</li>
+            <li>Run <code>Gstore.exe</code> from inside that folder. It needs the files next to it, so it is not a single portable exe you can move on its own.</li>
+            <li>SmartScreen says "Windows protected your PC". Choose <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+          </ol>
+          <p class="aside">Put the unzipped folder somewhere permanent before you make a shortcut to it.</p>
+        </div>
+      
+
+        <div class="fl__col">
+          <h3>Linux</h3>
+          <ol class="plain">
+            <li>Extract the archive and keep the folder in one piece:
+              <code>tar -xzf Gstore-linux-x64.tar.gz</code></li>
+            <li>Run <code>./Gstore/Gstore</code>. There is no warning to dismiss.</li>
+            <li>Gstore stores its encryption key in your desktop keyring, so a
+              session with one running (GNOME Keyring, KWallet) is needed.</li>
+          </ol>
+          <p class="aside">The Linux build is new in 0.1.0 and has had the least
+            testing of the three. If it misbehaves, the log file named in the
+            README is the place to look.</p>
+        </div></div>
+    </div>
+  </section>
+
+  <section class="tr" id="privacy">
+    <div class="wrap">
+      <h2>There is no server in the middle.</h2>
+      <p class="tr__lede">Gstore runs on your machine and talks to Google's APIs directly. File contents move directly between your device and Google, and nothing is sent to or stored by the developer. There is no analytics, no telemetry and no third-party SDK in the build. The one exception is an update check: at startup Gstore asks GitHub whether a newer version exists, which carries no account information, no file names and no identifier, and can be switched off. It is described in full in the <a href="/PRIVACY">privacy policy</a>.</p>
+
+      <div class="facts">
+        <div class="fact">
+          <h3>Credentials are encrypted at rest</h3>
+          <p>Your Google tokens are encrypted with Fernet, and the master key is kept in your operating system keychain rather than on disk in plaintext. Gstore encrypts those credentials, not your file contents; files sit in your own Google accounts under Google's protections.</p>
+        </div>
+        <div class="fact">
+          <h3>A narrow Google permission by default</h3>
+          <p>Gstore asks for the <code>drive.file</code> scope, which only covers files Gstore itself put there. It is not asking to read the rest of your Drive. Browsing everything already in your accounts is an optional advanced mode that needs a broader permission you would have to grant on purpose.</p>
+        </div>
+        <div class="fact">
+          <h3>No account to create</h3>
+          <p>There is no sign-up, no email address, no license key and no update server to check in with. You link your own Google accounts, and a Google account is the only thing you need to bring.</p>
+        </div>
+        <div class="fact">
+          <h3>Open source</h3>
+          <p>The whole app is on GitHub. Read it before you trust it, build it yourself if you would rather not run someone else's binary, or fork it and change what you want.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__in">
+    <p class="foot__about"><strong>Gstore</strong> is a local desktop app for pooling the Google storage you already have.</p>
+    <nav class="foot__links" aria-label="Project links">
+      <a href="https://github.com/Parthivsurya/Gstorage">View source</a>
+      <a href="https://github.com/Parthivsurya/Gstorage/releases">Releases</a>
+      <a href="https://github.com/Parthivsurya/Gstorage/issues">Report an issue</a>
+    </nav>
+    <p class="foot__fine">Not affiliated with Google. Google Drive is a trademark of Google LLC.</p>
+  </div>
+  <p><a href="/PRIVACY">Privacy policy</a> &middot; <a href="/release-notes/">Release notes</a></p>
+</footer>
+
+<script>
+/* Progressive enhancement only: highlight the platform the visitor is probably on.
+   With JavaScript off, no attribute is set and every download stays visible. */
+(function () {
+  var box = document.getElementById('platforms');
+  if (!box) return;
+  var ua = navigator.userAgent || '';
+  var plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+  var hay = (plat + ' ' + ua).toLowerCase();
+  if (/iphone|ipad|ipod|android/.test(hay)) return;
+  if (hay.indexOf('win') > -1) box.setAttribute('data-os', 'windows');
+  else if (hay.indexOf('mac') > -1) box.setAttribute('data-os', 'macos');
+  // Android reports "linux" too, but it was already returned above.
+  else if (hay.indexOf('linux') > -1 || hay.indexOf('x11') > -1) box.setAttribute('data-os', 'linux');
+})();
+
+/* Progressive enhancement only: show how many times the builds have been
+   downloaded. The number is GitHub's own count for the release assets, summed
+   over every release, so it is a running total rather than the current
+   version's. Public endpoint, no key, nothing about the visitor is sent. If
+   the request fails or JavaScript is off, the line stays hidden instead of
+   showing a placeholder. */
+(function () {
+  var box = document.getElementById('dl-count');
+  var out = document.getElementById('dl-count-num');
+  if (!box || !out || !window.fetch) return;
+
+  var API = 'https://api.github.com/repos/Parthivsurya/Gstorage/releases?per_page=100';
+  var KEY = 'gstore.downloads';
+  var TTL = 3600000; /* GitHub allows 60 unauthenticated calls an hour per IP,
+                        so a repeat visit reads the last answer instead. */
+
+  function show(n) {
+    out.textContent = n.toLocaleString('en-US');
+    box.hidden = false;
+  }
+
+  function remembered() {
+    try {
+      var v = JSON.parse(localStorage.getItem(KEY));
+      if (v && typeof v.n === 'number' && typeof v.t === 'number') return v;
+    } catch (e) {}
+    return null;
+  }
+
+  var last = remembered();
+  if (last && Date.now() - last.t < TTL) { show(last.n); return; }
+
+  fetch(API, { headers: { Accept: 'application/vnd.github+json' } })
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function (releases) {
+      var total = releases.reduce(function (sum, rel) {
+        return sum + (rel.assets || []).reduce(function (s, a) {
+          return s + (a.download_count || 0);
+        }, 0);
+      }, 0);
+      if (!total) return;
+      show(total);
+      try {
+        localStorage.setItem(KEY, JSON.stringify({ n: total, t: Date.now() }));
+      } catch (e) {}
+    })
+    .catch(function () { if (last) show(last.n); });
+})();
+</script>
+
+</body>
+</html>
