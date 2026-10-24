@@ -1,7 +1,9 @@
 """Upload a large file as chunks distributed across accounts (Phase B).
 
 Each chunk is a byte range of the local file uploaded as its own Drive file on
-its assigned account, verified against Drive's md5Checksum. If any chunk fails,
+its assigned account, verified against Drive's md5Checksum. Ranges are streamed
+straight from the open file, so memory stays at the size of the resumable piece
+in flight rather than the whole chunk. If any chunk fails,
 the chunks already uploaded are deleted so a partial upload never leaks orphaned
 Drive files (and their quota). The caller records the successful chunks in the
 index; nothing is persisted here.
@@ -10,7 +12,7 @@ index; nothing is persisted here.
 from __future__ import annotations
 
 import hashlib
-import io
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
@@ -25,6 +27,7 @@ from gstore.drive.rate_limit import Cancelled, execute_with_backoff
 from gstore.drive.service import drive_service
 
 _UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024  # resumable transfer granularity per chunk
+_HASH_BLOCK = 1024 * 1024  # read size while checksumming a chunk
 
 # Marker in a chunk part-file's Drive name; reconcile uses it to spot orphans.
 PART_MARKER = ".gstore-part-"
@@ -54,23 +57,99 @@ class ChunkResume(Protocol):
     def record(self, result: ChunkUploadResult) -> None: ...
 
 
-def _upload_bytes(
+class _FileSlice:
+    """A read-only, seekable view of one byte range of an already-open file.
+
+    MediaIoBaseUpload only ever calls seek/tell/read, so a chunk can be fed
+    straight from the original file instead of being loaded into memory.
+    Reading 50 MB and then handing it to io.BytesIO — which copies — meant
+    ~100 MB live per chunk; this holds only the 5 MB piece in flight.
+
+    Positions are relative to the slice, so the stream looks exactly like a
+    `length`-byte file. The underlying handle is seeked on every read, so the
+    caller must not interleave its own reads on it.
+    """
+
+    def __init__(self, fh, offset: int, length: int) -> None:
+        self._fh = fh
+        self._offset = offset
+        self._length = length
+        self._pos = 0
+
+    def seek(self, pos: int, whence: int = os.SEEK_SET) -> int:
+        if whence == os.SEEK_SET:
+            target = pos
+        elif whence == os.SEEK_CUR:
+            target = self._pos + pos
+        elif whence == os.SEEK_END:
+            target = self._length + pos
+        else:
+            raise ValueError(f"invalid whence: {whence}")
+        self._pos = max(0, min(target, self._length))
+        return self._pos
+
+    def tell(self) -> int:
+        return self._pos
+
+    def read(self, size: int = -1) -> bytes:
+        remaining = self._length - self._pos
+        if size is None or size < 0:
+            size = remaining
+        size = min(size, remaining)
+        if size <= 0:
+            return b""
+        self._fh.seek(self._offset + self._pos)
+        data = self._fh.read(size)
+        self._pos += len(data)
+        return data
+
+
+def _slice_md5(fh, offset: int, length: int) -> str:
+    """Checksum a byte range in blocks, and confirm it is all actually there.
+
+    Returning early on a short read is the short-file guard: a file truncated
+    mid-upload would otherwise have a stunted chunk stored, and nothing would
+    notice until reassembly failed at download time.
+    """
+    digest = hashlib.md5()
+    read = 0
+    fh.seek(offset)
+    while read < length:
+        block = fh.read(min(_HASH_BLOCK, length - read))
+        if not block:
+            break
+        digest.update(block)
+        read += len(block)
+    if read != length:
+        raise IntegrityError(
+            f"file changed while uploading: expected {length} bytes at offset "
+            f"{offset}, got {read}."
+        )
+    return digest.hexdigest()
+
+
+def _upload_range(
+    service,
     credentials: Credentials,
     name: str,
-    data: bytes,
+    fh,
+    offset: int,
+    length: int,
     should_stop: Callable[[], bool] | None = None,
     on_progress: Callable[[float], None] | None = None,
 ) -> tuple[str, str]:
-    """Upload a bytes payload as one Drive file; verify + return (id, md5).
+    """Upload one byte range of `fh` as a Drive file; verify + return (id, md5).
+
+    Streams the range straight from the open file — nothing is buffered beyond
+    the resumable piece in flight.
 
     `on_progress` reports this chunk's own 0.0-1.0 completion as each inner
     resumable piece lands, so a caller can show movement inside a 50 MB chunk
     instead of only between chunks.
     """
-    local_md5 = hashlib.md5(data).hexdigest()
-    service = drive_service(credentials)
+    local_md5 = _slice_md5(fh, offset, length)
     media = MediaIoBaseUpload(
-        io.BytesIO(data),
+        _FileSlice(fh, offset, length),
         mimetype="application/octet-stream",
         resumable=True,
         chunksize=_UPLOAD_CHUNK_BYTES,
@@ -134,23 +213,24 @@ def upload_chunks(
     results: list[ChunkUploadResult] = list(already.values())
     uploaded_this_run: list[ChunkUploadResult] = []
 
+    # One Drive service per account, not per chunk. A 20 GB file is 410
+    # chunks; building a service (and a fresh TLS connection) for each was
+    # pure churn.
+    services: dict[int, object] = {}
+
+    def service_for(account_id: int):
+        service = services.get(account_id)
+        if service is None:
+            service = drive_service(credentials_for(account_id))
+            services[account_id] = service
+        return service
+
     try:
         with open(path, "rb") as fh:
             for plan in ordered:
                 if should_stop is not None and should_stop():
                     raise Cancelled("upload cancelled")
-                fh.seek(plan.offset)
-                data = fh.read(plan.length)
-                if len(data) != plan.length:
-                    # The file shrank or was truncated while we were uploading
-                    # it. Sending the short read would store a chunk whose
-                    # length disagrees with the plan, and nothing would notice
-                    # until reassembly failed its checksum at download time.
-                    raise IntegrityError(
-                        f"{path.name} changed while uploading: chunk "
-                        f"{plan.sequence} expected {plan.length} bytes at "
-                        f"offset {plan.offset}, got {len(data)}."
-                    )
+
                 # Report inside the chunk too. A 20 GB file is 410 chunks, so
                 # chunk-granular progress alone leaves the bar motionless for
                 # minutes at a time and the upload looks hung.
@@ -160,10 +240,13 @@ def upload_chunks(
                     if on_progress is not None:
                         on_progress((_base + fraction * _len) / total)
 
-                drive_id, md5 = _upload_bytes(
+                drive_id, md5 = _upload_range(
+                    service_for(plan.account_id),
                     credentials_for(plan.account_id),
                     part_name(path.name, plan.sequence),
-                    data,
+                    fh,
+                    plan.offset,
+                    plan.length,
                     should_stop,
                     chunk_progress,
                 )
@@ -172,14 +255,14 @@ def upload_chunks(
                     account_id=plan.account_id,
                     drive_file_id=drive_id,
                     md5=md5,
-                    size_bytes=len(data),
+                    size_bytes=plan.length,
                 )
                 if resume is not None:
                     resume.record(result)  # staged: survives an interruption
                 else:
                     uploaded_this_run.append(result)
                 results.append(result)
-                done_bytes += len(data)
+                done_bytes += plan.length
                 if on_progress is not None:
                     on_progress(done_bytes / total)
         return sorted(results, key=lambda r: r.sequence)

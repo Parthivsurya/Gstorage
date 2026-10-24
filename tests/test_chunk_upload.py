@@ -6,9 +6,10 @@ as it did. These cover the paths a flaky network actually takes: an upload cut
 off partway, resumed, cancelled, retried, or reading a file that changed under
 it.
 
-The network is stubbed throughout — `_upload_bytes` is replaced with a fake
+The network is stubbed throughout — `_upload_range` is replaced with a fake
 backed by an in-memory {drive_file_id: bytes} store that mirrors the real
-function's contract (returns id + md5, raises on failure).
+function's contract (reads the range from the open file, returns id + md5,
+raises on failure).
 """
 
 from __future__ import annotations
@@ -64,19 +65,24 @@ class FakeDrive:
         self.raise_with: Exception | None = None
         self._n = 0
 
-    def upload_bytes(self, credentials, name, data, should_stop=None,
-                     on_progress=None):
+    def upload_range(self, service, credentials, name, fh, offset, length,
+                     should_stop=None, on_progress=None):
         self._n += 1
         if self.fail_on is not None and self._n == self.fail_on:
             raise self.raise_with or ConnectionResetError(54, "Connection reset")
-        # Mirror the real function reporting its inner resumable pieces.
+        # The real function checksums the range first, which is also the
+        # short-file guard — keep that behaviour so the guard stays covered.
+        md5 = chunk_upload._slice_md5(fh, offset, length)
+        # Read through the same slice view the real upload streams from.
+        sl = chunk_upload._FileSlice(fh, offset, length)
+        data = sl.read()
         if on_progress is not None:
             for frac in (0.5, 1.0):
                 on_progress(frac)
         drive_id = f"drive-{name}"
         self.store[drive_id] = data
         self.uploads.append((name, len(data)))
-        return drive_id, _md5(data)
+        return drive_id, md5
 
     def delete(self, credentials, drive_id):
         self.deleted.append(drive_id)
@@ -86,7 +92,7 @@ class FakeDrive:
 @pytest.fixture
 def drive(monkeypatch):
     fake = FakeDrive()
-    monkeypatch.setattr(chunk_upload, "_upload_bytes", fake.upload_bytes)
+    monkeypatch.setattr(chunk_upload, "_upload_range", fake.upload_range)
     monkeypatch.setattr(chunk_upload, "delete_drive_file", fake.delete)
     return fake
 
@@ -419,3 +425,76 @@ def test_cancel_is_noticed_without_waiting_out_the_backoff():
     with pytest.raises(Cancelled):
         execute_with_backoff(call, base_delay=30.0, should_stop=lambda: stop["v"])
     assert time.monotonic() - started < 2.0
+
+
+# -- the streaming slice ------------------------------------------------------
+
+
+def _slice_over(tmp_path, data: bytes, offset: int, length: int):
+    p = tmp_path / "s.bin"
+    p.write_bytes(data)
+    return chunk_upload._FileSlice(open(p, "rb"), offset, length)
+
+
+def test_slice_reads_only_its_own_range(tmp_path):
+    data = bytes(range(256))
+    sl = _slice_over(tmp_path, data, offset=10, length=20)
+    assert sl.read() == data[10:30]
+
+
+def test_slice_reports_its_length_as_the_file_size(tmp_path):
+    """MediaIoBaseUpload sizes the upload with seek(0, SEEK_END) + tell()."""
+    sl = _slice_over(tmp_path, bytes(range(256)), offset=10, length=20)
+    import os as _os
+
+    sl.seek(0, _os.SEEK_END)
+    assert sl.tell() == 20
+
+
+def test_slice_never_reads_past_its_end(tmp_path):
+    data = bytes(range(256))
+    sl = _slice_over(tmp_path, data, offset=200, length=56)
+    assert len(sl.read(999)) == 56  # asked for more than the slice holds
+    assert sl.read(10) == b""  # and then it is exhausted
+
+
+def test_slice_supports_random_access(tmp_path):
+    """getbytes() seeks to an absolute position and reads from there."""
+    data = bytes(range(256))
+    sl = _slice_over(tmp_path, data, offset=100, length=100)
+    sl.seek(30)
+    assert sl.read(10) == data[130:140]
+    sl.seek(0)
+    assert sl.read(5) == data[100:105]
+
+
+def test_slice_clamps_out_of_range_seeks(tmp_path):
+    sl = _slice_over(tmp_path, bytes(range(256)), offset=0, length=10)
+    assert sl.seek(-5) == 0
+    assert sl.seek(999) == 10
+
+
+def test_chunk_is_never_held_in_memory(tmp_path):
+    """The point of the slice: a 50 MB chunk must not cost 50 MB of RAM."""
+    size = 8 * MB
+    path, data = _write(tmp_path, size)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], size, chunk_size=size)
+
+    biggest = {"n": 0}
+    real_read = chunk_upload._FileSlice.read
+
+    def watched(self, n=-1):
+        out = real_read(self, n)
+        biggest["n"] = max(biggest["n"], len(out))
+        return out
+
+    chunk_upload._FileSlice.read = watched
+    try:
+        sl = chunk_upload._FileSlice(open(path, "rb"), 0, size)
+        while sl.read(5 * MB):
+            pass
+    finally:
+        chunk_upload._FileSlice.read = real_read
+
+    # never a single read of the whole 8 MB chunk
+    assert biggest["n"] <= 5 * MB
