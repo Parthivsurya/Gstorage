@@ -54,10 +54,27 @@ the app and deleting its application-data directory removes it all.
 - It does not sell, share, or transmit your data to anyone.
 - It does not access files in your Drive that it did not create.
 
+## Update checks
+
+Gstore is distributed as a direct download rather than through an app store,
+so it asks GitHub once at startup whether a newer version has been released.
+
+That request is a plain, unauthenticated `GET` to GitHub's public releases
+endpoint for this project. It carries **no account information, no file names,
+no email address, no tokens and no identifier of any kind** — only the IP
+address that every HTTP request necessarily reveals, in this case to GitHub.
+Nothing is downloaded or installed automatically; if a newer version exists
+the app shows a notice, and the buttons on it only open your browser.
+
+This is the only request Gstore makes to anywhere other than Google. You can
+switch it off — set the `GSTORE_NO_UPDATE_CHECK` environment variable, or
+create a file named `update_check.disabled` in Gstore's application-data
+directory — and the app will then contact nothing but Google.
+
 ## Third-party services
 
-Gstore communicates only with **Google's APIs**, on your behalf, using the
-account(s) you link. Your use of those accounts is governed by
+Apart from the update check described above, Gstore communicates only with
+**Google's APIs**, on your behalf, using the account(s) you link. Your use of those accounts is governed by
 [Google's Privacy Policy](https://policies.google.com/privacy) and the
 [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy).
 Gstore's use of information received from Google APIs adheres to that policy,

@@ -213,8 +213,15 @@ account** again, signing in as the same account — so until then an older
 account still shows only its Gstore files in a scan and cannot trash
 anything else.
 
-Gstore makes **no network requests to anywhere but Google**. For what is stored
-and what is not, see [PRIVACY.md](PRIVACY.md).
+Apart from one update check, Gstore makes **no network requests to anywhere
+but Google**. At startup it asks GitHub's public releases endpoint whether a
+newer version exists — an anonymous `GET` carrying no account data, no file
+names and no identifier — and shows a notice if one does. Nothing is
+downloaded or installed automatically. Switch it off with
+`GSTORE_NO_UPDATE_CHECK=1`, or by creating `update_check.disabled` in the
+app-data directory, and the app contacts nothing but Google.
+
+For what is stored and what is not, see [PRIVACY.md](PRIVACY.md).
 
 ## Project layout
 
