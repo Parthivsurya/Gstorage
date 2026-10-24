@@ -14,10 +14,12 @@ single file list spans them. Gstore puts one folder tree over all of them, picks
 which account each upload should land on, and keeps track of where everything
 went.
 
-<img src="assets/screenshots/files-list.png" width="880"
-     alt="Gstore's Files tab: one folder tree listing files that physically live on three different Google accounts, each row showing its size and home account.">
+<img src="assets/screenshots/downloading.png" width="880"
+     alt="Gstore downloading a 20 GB file that was split into 409 chunks across two Google accounts, showing 130 of 409 chunks done, 32%, 6.3 GB of 20.0 GB, 16.6 MB/s and 14 minutes remaining.">
 
-*One folder tree. Each row shows which account actually holds the file.*
+*A 20 GB file — too big for either account on its own — split into 409 chunks
+and coming back. Several chunks are fetched at once; one at a time was roughly
+four times slower.*
 
 It is a desktop app, and it is **local-only**. File bytes travel straight
 between your machine and Google's servers. There is no Gstore server, no Gstore
@@ -48,12 +50,12 @@ account, and nothing to sign up for — see the [privacy policy](PRIVACY.md).
 | macOS (Apple Silicon) | [Gstore-macos-arm64.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg) |
 | macOS (Intel) | [Gstore-macos-intel.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-intel.dmg) |
 | Windows 64-bit | [Gstore-windows-x64.zip](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip) |
+| Linux x86_64 | [Gstore-linux-x64.tar.gz](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-linux-x64.tar.gz) |
 
 Those links always resolve to the newest release. What changed in each version is written up in the
-[release notes](https://gstore.iampkb.dev/release-notes/). Linux has no prebuilt binary
-yet — [build from source](#from-source). The Intel macOS build is produced by a
-best-effort CI job and may be missing from a given release; the Apple Silicon
-and Intel builds are not interchangeable.
+[release notes](https://gstore.iampkb.dev/release-notes/). The Intel macOS
+build comes from a best-effort CI job and may be missing from a given release;
+the Apple Silicon and Intel builds are not interchangeable.
 
 **These builds are not code-signed**, so the OS will warn you on first launch:
 
@@ -62,6 +64,13 @@ and Intel builds are not interchangeable.
 - **Windows** — SmartScreen shows "Windows protected your PC". Choose **More
   info** → **Run anyway**. Unzip first and run `Gstore.exe` from the extracted
   folder, keeping it next to its files.
+- **Linux** — no warning, but Qt needs a desktop session. Extract and run the
+  binary, keeping it next to its files:
+
+  ```bash
+  tar -xzf Gstore-linux-x64.tar.gz
+  ./Gstore/Gstore
+  ```
 
 macOS asks for your login keychain password once, so Gstore can store its
 encryption key. Choose **Always Allow** so it stops asking.
@@ -97,10 +106,10 @@ ships its own OAuth client, so there is no console setup and no JSON to
 download.
 
 <img src="assets/screenshots/storage.png" width="880"
-     alt="Gstore's Storage tab: a combined total reading 24.3 GB free, 20.7 GB used of 45.0 GB across three synced accounts, with a usage bar per account.">
+     alt="Gstore's Storage tab: a combined total reading 10.0 GB free, 20.0 GB used of 30.0 GB across two synced accounts, with a usage bar for each.">
 
-Three 15 GB accounts read as one 45 GB pool, with each account's own usage
-below it.
+*Two 15 GB accounts reading as one 30 GB pool, holding the 20 GB file between
+them. Account names are masked in this screenshot, not in the app.*
 
 If an account's access is later revoked or expires, Gstore marks that row
 "needs re-link" and keeps its files listed rather than hiding them. Clicking
@@ -144,20 +153,44 @@ is kept so reassembly can be verified end to end.
 
 ### Uploads and downloads
 
-Uploads stream to Drive as **resumable** transfers with a progress bar. The
-session URI is recorded in the index keyed to the local file's identity (path +
-size + mtime), so an upload interrupted halfway resumes where it stopped rather
-than starting over — and any edit to the file invalidates the stale session.
-Chunked uploads track completed chunks the same way and resume from the first
-missing one.
+<img src="assets/screenshots/uploading.png" width="880"
+     alt="Gstore uploading a 20 GB file: 46% done, 9.1 GB of 20.0 GB, 1.6 MB/s, 1 hour 55 minutes remaining, with a Cancel button beside the progress bar.">
 
-Content MD5 is checked against Drive's own `md5Checksum` when a file goes up,
-and the written file is verified again on the way back down.
 
-Every Drive API call is funnelled through one retry wrapper that backs off
-exponentially on `429`, `500`, `502`, `503`, and on `403 rateLimitExceeded` /
-`userRateLimitExceeded` — so a rate limit slows a transfer down instead of
-failing it.
+**Several chunks move at once.** A single connection to Google is held well
+below what a modern link can carry — latency and per-connection limits, not
+bandwidth — so one chunk at a time left most of the line idle. Measured on a
+5G connection rated 80 Mb/s:
+
+| Direction | One at a time | Concurrent | |
+| --- | --- | --- | --- |
+| Download | 0.87 MB/s | 3.78 MB/s | **4.3×** |
+| Upload | 0.49 MB/s | 1.20 MB/s | **2.5×** |
+
+Four streams by default — deliberately short of what the link can take, since
+every stream spends Drive API quota and shares a per-user rate limit. Raise it
+with `GSTORE_DOWNLOAD_STREAMS` and `GSTORE_UPLOAD_STREAMS` (max 16).
+
+**An interrupted transfer resumes, in both directions.** Uploads record each
+finished chunk against the local file's identity (path + size + mtime), so any
+edit to the file invalidates the stale progress. Downloads accumulate into a
+sibling `.gstore-part` file and record which chunks arrived; the destination
+only appears once the whole-file checksum passes, so it never holds partial or
+unverified data. Pick the same file or destination again and it continues.
+
+**Cancelling is pausing.** What has already moved is kept, so a cancelled
+transfer resumes exactly like an interrupted one. Quitting mid-transfer offers
+the same, rather than losing the work.
+
+Content MD5 is checked against Drive's own `md5Checksum` on the way up, and
+each chunk is hashed as it streams on the way back down, with the reassembled
+file verified against the original's checksum before it is put in place.
+
+Every Drive API call goes through one retry wrapper that backs off
+exponentially on `429`, `500`, `502`, `503`, `403 rateLimitExceeded` /
+`userRateLimitExceeded` — and on transport failures, which is the common case:
+a dropped link, a reset connection, DNS briefly vanishing. A blip slows a
+transfer down instead of ending it.
 
 ### Keeping the index honest
 
@@ -333,14 +366,31 @@ Markdown file is public unless you add it there.
 
 ## Status
 
-**v1 is feature-complete.** Multi-account sign-in, pooled storage totals, the
-unified folder tree, smart-placement uploads, downloads, deletes across
-accounts, index repair, chunking for oversized files, and the live combined
-Drive scan all work. Current version: **0.0.5**.
+Current version **0.1.0**, built for macOS, Windows and Linux. See the
+[release notes](https://gstore.iampkb.dev/release-notes/) for what changed.
+
+Everything the app is for works and has been exercised on a real 20 GB file:
+multi-account sign-in, pooled totals, the unified folder tree, smart placement,
+chunking across accounts, concurrent resumable transfers in both directions,
+deletes spanning accounts, index repair, and the live combined Drive scan. That
+file went up through four interruptions, came back through another, and
+arrived byte-for-byte identical.
+
+Known gaps, honestly:
+
+- **Not code-signed or notarized**, so every platform warns on first launch.
+- **The Linux build has never been launched on a real Linux desktop.** It
+  compiles and its tests pass headless in CI; nobody has run the GUI.
+- **A chunk needs one account with room for the whole chunk.** Pooled free
+  space spread thinly across many accounts will not place a file even when the
+  total would fit.
+- **A fresh chunked upload reads the file twice** — once to checksum, once to
+  send. Resumed uploads skip the first pass; fresh ones do not yet.
+- **No folder upload**, and long filenames clip in Grid and Gallery view.
 
 Still ahead:
 
-- Code signing and notarization, so first launch stops warning.
+- Code signing and notarization.
 - Google OAuth verification + CASA assessment, to make the whole-Drive scan
   available without the opt-in flag.
 - A FUSE mount, exposing the pool as a real filesystem.

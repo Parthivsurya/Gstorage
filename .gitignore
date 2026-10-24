@@ -33,5 +33,9 @@ CHANGES.md
 # commit candidate.
 *.gstore-part
 
+# Unmasked screenshot originals. The versions published in assets/screenshots
+# have the account names redacted; these do not, and this repo is public.
+ss/
+
 # macOS
 .DS_Store
