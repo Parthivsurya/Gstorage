@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import socket
+import threading
 import ssl
 
 import pytest
@@ -64,24 +65,49 @@ class FakeDrive:
         self.fail_on: int | None = None
         self.raise_with: Exception | None = None
         self._n = 0
+        self._lock = threading.Lock()
+        self.delay = 0.0
+        self.concurrent = 0
+        self.peak = 0
 
-    def upload_range(self, service, credentials, name, fh, offset, length,
+    def upload_range(self, credentials, name, fd, offset, length,
                      should_stop=None, on_progress=None):
-        self._n += 1
-        if self.fail_on is not None and self._n == self.fail_on:
+        with self._lock:
+            self._n += 1
+            n = self._n
+            self.concurrent += 1
+            self.peak = max(self.peak, self.concurrent)
+        try:
+            return self._do(credentials, name, fd, offset, length, should_stop,
+                            on_progress, n)
+        finally:
+            with self._lock:
+                self.concurrent -= 1
+
+    def _do(self, credentials, name, fd, offset, length, should_stop,
+            on_progress, n):
+        if self.delay:
+            import time
+
+            time.sleep(self.delay)
+        if should_stop is not None and should_stop():
+            from gstore.drive.rate_limit import Cancelled
+
+            raise Cancelled("upload cancelled")
+        if self.fail_on is not None and n == self.fail_on:
             raise self.raise_with or ConnectionResetError(54, "Connection reset")
         # The real function checksums the range first, which is also the
         # short-file guard — keep that behaviour so the guard stays covered.
-        md5 = chunk_upload._slice_md5(fh, offset, length)
+        md5 = chunk_upload._slice_md5(fd, offset, length)
         # Read through the same slice view the real upload streams from.
-        sl = chunk_upload._FileSlice(fh, offset, length)
-        data = sl.read()
+        data = chunk_upload._FdSlice(fd, offset, length).read()
         if on_progress is not None:
             for frac in (0.5, 1.0):
                 on_progress(frac)
         drive_id = f"drive-{name}"
-        self.store[drive_id] = data
-        self.uploads.append((name, len(data)))
+        with self._lock:
+            self.store[drive_id] = data
+            self.uploads.append((name, len(data)))
         return drive_id, md5
 
     def delete(self, credentials, drive_id):
@@ -130,7 +156,7 @@ def test_uploads_every_chunk_in_sequence_order(drive, tmp_path):
     path, data = _write(tmp_path, 5 * MB)
     plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
 
-    results = upload_chunks(path, plans, _creds_for)
+    results = upload_chunks(path, plans, _creds_for, streams=1)
 
     assert [r.sequence for r in results] == [0, 1, 2, 3, 4]
     assert b"".join(drive.store[r.drive_file_id] for r in results) == data
@@ -140,7 +166,7 @@ def test_each_chunk_records_its_own_length_not_the_file_size(drive, tmp_path):
     path, data = _write(tmp_path, 5 * MB)
     plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=2 * MB)
 
-    results = upload_chunks(path, plans, _creds_for)
+    results = upload_chunks(path, plans, _creds_for, streams=1)
 
     assert [r.size_bytes for r in results] == [2 * MB, 2 * MB, MB]
     assert sum(r.size_bytes for r in results) == len(data)
@@ -152,7 +178,7 @@ def test_progress_moves_inside_a_chunk_not_only_between_them(drive, tmp_path):
     plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
 
     seen: list[float] = []
-    upload_chunks(path, plans, _creds_for, on_progress=seen.append)
+    upload_chunks(path, plans, _creds_for, on_progress=seen.append, streams=1)
 
     # 4 chunks, each reporting twice -> more updates than there are chunks
     assert len(seen) > len(plans)
@@ -165,7 +191,7 @@ def test_progress_is_monotonic_and_reaches_one(drive, tmp_path):
     plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
 
     seen: list[float] = []
-    upload_chunks(path, plans, _creds_for, on_progress=seen.append)
+    upload_chunks(path, plans, _creds_for, on_progress=seen.append, streams=1)
 
     assert seen == sorted(seen)
     assert seen[-1] == pytest.approx(1.0)
@@ -182,7 +208,7 @@ def test_interrupted_upload_keeps_staged_chunks(drive, tmp_path):
     drive.fail_on = 4  # network dies partway through
 
     with pytest.raises(ConnectionResetError):
-        upload_chunks(path, plans, _creds_for, resume=resume)
+        upload_chunks(path, plans, _creds_for, resume=resume, streams=1)
 
     assert sorted(resume.rows) == [0, 1, 2]
     assert drive.deleted == []  # staged, not cleaned up
@@ -196,12 +222,12 @@ def test_resume_uploads_only_the_missing_chunks(drive, tmp_path):
 
     plans = plan_chunk_placement(accounts, len(data), chunk_size=MB)
     with pytest.raises(ConnectionResetError):
-        upload_chunks(path, plans, _creds_for, resume=resume)
+        upload_chunks(path, plans, _creds_for, resume=resume, streams=1)
 
     drive.fail_on = None
     before = len(drive.uploads)
     missing = plan_missing_chunks(accounts, len(data), set(resume.rows), MB)
-    results = upload_chunks(path, missing, _creds_for, resume=resume)
+    results = upload_chunks(path, missing, _creds_for, resume=resume, streams=1)
 
     assert len(drive.uploads) - before == 2  # only chunks 3 and 4 re-sent
     assert [r.sequence for r in results] == [0, 1, 2, 3, 4]
@@ -224,7 +250,7 @@ def test_resumed_chunks_keep_their_real_sizes(drive, tmp_path):
         )
     drive.fail_on = None
     missing = plan_missing_chunks(accounts, len(data), set(resume.rows), 2 * MB)
-    results = upload_chunks(path, missing, _creds_for, resume=resume)
+    results = upload_chunks(path, missing, _creds_for, resume=resume, streams=1)
 
     assert [r.size_bytes for r in results] == [2 * MB, 2 * MB, MB]
     assert all(r.size_bytes <= 2 * MB for r in results)
@@ -236,7 +262,7 @@ def test_without_a_resume_store_failed_upload_cleans_up(drive, tmp_path):
     drive.fail_on = 4
 
     with pytest.raises(ConnectionResetError):
-        upload_chunks(path, plans, _creds_for)  # no resume=
+        upload_chunks(path, plans, _creds_for, streams=1)  # no resume=
 
     assert len(drive.deleted) == 3  # no orphans left behind
 
@@ -256,6 +282,7 @@ def test_cancel_stops_between_chunks_and_keeps_progress(drive, tmp_path):
             _creds_for,
             resume=resume,
             should_stop=lambda: len(resume.rows) >= 2,
+            streams=1,
         )
 
     assert sorted(resume.rows) == [0, 1]
@@ -271,7 +298,7 @@ def test_truncated_file_is_refused_not_silently_short_uploaded(drive, tmp_path):
     path.write_bytes(data[: 2 * MB])  # shrinks mid-upload
 
     with pytest.raises(IntegrityError, match="changed while uploading"):
-        upload_chunks(path, plans, _creds_for)
+        upload_chunks(path, plans, _creds_for, streams=1)
 
     assert all(n == MB for _name, n in drive.uploads)  # no short chunk stored
 
@@ -433,7 +460,9 @@ def test_cancel_is_noticed_without_waiting_out_the_backoff():
 def _slice_over(tmp_path, data: bytes, offset: int, length: int):
     p = tmp_path / "s.bin"
     p.write_bytes(data)
-    return chunk_upload._FileSlice(open(p, "rb"), offset, length)
+    import os as _os
+
+    return chunk_upload._FdSlice(_os.open(p, _os.O_RDONLY), offset, length)
 
 
 def test_slice_reads_only_its_own_range(tmp_path):
@@ -476,25 +505,104 @@ def test_slice_clamps_out_of_range_seeks(tmp_path):
 
 def test_chunk_is_never_held_in_memory(tmp_path):
     """The point of the slice: a 50 MB chunk must not cost 50 MB of RAM."""
+    import os as _os
+
     size = 8 * MB
-    path, data = _write(tmp_path, size)
-    plans = plan_chunk_placement([_account(1, 50 * MB)], size, chunk_size=size)
+    path, _data = _write(tmp_path, size)
 
-    biggest = {"n": 0}
-    real_read = chunk_upload._FileSlice.read
-
-    def watched(self, n=-1):
-        out = real_read(self, n)
-        biggest["n"] = max(biggest["n"], len(out))
-        return out
-
-    chunk_upload._FileSlice.read = watched
+    biggest = 0
+    fd = _os.open(path, _os.O_RDONLY)
     try:
-        sl = chunk_upload._FileSlice(open(path, "rb"), 0, size)
-        while sl.read(5 * MB):
-            pass
+        sl = chunk_upload._FdSlice(fd, 0, size)
+        while True:
+            block = sl.read(5 * MB)
+            if not block:
+                break
+            biggest = max(biggest, len(block))
     finally:
-        chunk_upload._FileSlice.read = real_read
+        _os.close(fd)
 
     # never a single read of the whole 8 MB chunk
-    assert biggest["n"] <= 5 * MB
+    assert biggest <= 5 * MB
+
+
+# -- concurrency -------------------------------------------------------------
+
+
+def test_chunks_are_uploaded_concurrently(drive, tmp_path):
+    """One stream sits well below the link's capacity; this is the whole win."""
+    path, data = _write(tmp_path, 12 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+    drive.delay = 0.02  # let the pool genuinely overlap
+
+    upload_chunks(path, plans, _creds_for, streams=4)
+
+    assert drive.peak > 1
+
+
+def test_all_chunks_arrive_intact_despite_overlapping_reads(drive, tmp_path):
+    """Concurrent readers share one descriptor; pread keeps them from racing."""
+    path, data = _write(tmp_path, 12 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+    drive.delay = 0.01
+
+    results = upload_chunks(path, plans, _creds_for, streams=4)
+
+    rebuilt = b"".join(drive.store[r.drive_file_id] for r in results)
+    assert rebuilt == data  # every range read its own bytes, not another's
+
+
+def test_out_of_order_completion_is_still_staged_correctly(drive, tmp_path):
+    path, data = _write(tmp_path, 8 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+    resume = Resume()
+    drive.delay = 0.01
+
+    upload_chunks(path, plans, _creds_for, resume=resume, streams=4)
+
+    assert sorted(resume.rows) == [0, 1, 2, 3, 4, 5, 6, 7]
+    assert all(r.size_bytes == MB for r in resume.rows.values())
+
+
+def test_a_failure_stops_promptly_rather_than_draining_the_queue(drive, tmp_path):
+    """Everything submitted up front would keep uploading after a failure.
+
+    Those chunks land on Drive but are never recorded, so they are orphans the
+    caller cannot clean up — it never learned their ids.
+    """
+    path, data = _write(tmp_path, 16 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+    resume = Resume()
+    drive.fail_on = 2
+
+    with pytest.raises(ConnectionResetError):
+        upload_chunks(path, plans, _creds_for, resume=resume, streams=2)
+
+    # at most the in-flight window beyond the failure, not all sixteen
+    assert len(drive.uploads) <= 4
+
+
+def test_single_stream_remains_sequential(drive, tmp_path):
+    path, data = _write(tmp_path, 5 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+    drive.delay = 0.01
+
+    upload_chunks(path, plans, _creds_for, streams=1)
+
+    assert drive.peak == 1
+    assert [n for n, _ in drive.uploads] == [
+        f"big.bin.gstore-part-{i:05d}" for i in range(5)
+    ]
+
+
+def test_stream_count_defaults_and_clamps(monkeypatch):
+    monkeypatch.delenv("GSTORE_UPLOAD_STREAMS", raising=False)
+    assert chunk_upload.stream_count() == chunk_upload.DEFAULT_STREAMS
+    monkeypatch.setenv("GSTORE_UPLOAD_STREAMS", "8")
+    assert chunk_upload.stream_count() == 8
+    monkeypatch.setenv("GSTORE_UPLOAD_STREAMS", "999")
+    assert chunk_upload.stream_count() == chunk_upload._MAX_STREAMS
+    monkeypatch.setenv("GSTORE_UPLOAD_STREAMS", "0")
+    assert chunk_upload.stream_count() == 1
+    monkeypatch.setenv("GSTORE_UPLOAD_STREAMS", "nope")
+    assert chunk_upload.stream_count() == chunk_upload.DEFAULT_STREAMS
