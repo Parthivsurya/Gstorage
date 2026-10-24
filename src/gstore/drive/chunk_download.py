@@ -33,6 +33,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 from gstore.applog import get as get_logger
 from gstore.drive.hashing import IntegrityError
+from gstore.drive.positional_io import pwrite
 from gstore.drive.rate_limit import Cancelled, execute_with_backoff
 from gstore.drive.service import drive_service
 from gstore.index import Chunk
@@ -97,9 +98,11 @@ class _OffsetWriter:
     """Writes a chunk's stream into the output file at a fixed offset.
 
     MediaIoBaseDownload writes sequentially from zero, so this shifts every
-    write by the chunk's base offset. ``os.pwrite`` is positional and does not
-    touch the descriptor's shared file offset, which is what makes several
-    workers writing different regions of one file safe.
+    write by the chunk's base offset. :func:`gstore.drive.positional_io.pwrite`
+    is positional and does not touch the descriptor's shared file offset,
+    which is what makes several workers writing different regions of one file
+    safe. (Windows has no os.pwrite, so that helper falls back to a locked
+    seek-then-write there.)
 
     It also hashes as it writes, so verifying a chunk costs no extra read.
     """
@@ -111,7 +114,7 @@ class _OffsetWriter:
         self._digest = hashlib.md5()
 
     def write(self, data: bytes) -> int:
-        written = os.pwrite(self._fd, data, self._base + self._pos)
+        written = pwrite(self._fd, data, self._base + self._pos)
         self._digest.update(data[:written])
         self._pos += written
         return written

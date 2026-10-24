@@ -26,6 +26,7 @@ from gstore.applog import get as get_logger
 from gstore.drive.delete import delete_drive_file
 from gstore.drive.hashing import IntegrityError
 from gstore.drive.placement import ChunkPlan
+from gstore.drive.positional_io import pread
 from gstore.drive.rate_limit import Cancelled, execute_with_backoff
 from gstore.drive.service import drive_service
 
@@ -91,10 +92,12 @@ class _FdSlice:
     50 MB and handing it to io.BytesIO, which copies, meant ~100 MB live per
     chunk; this holds only the piece in flight.
 
-    Reads go through ``os.pread``, which is positional and leaves the
-    descriptor's shared offset alone. That is what lets several workers read
-    different ranges of the same file at once: a seek-then-read pair would
-    race, with two threads silently reading each other's bytes.
+    Reads go through :func:`gstore.drive.positional_io.pread`, which is
+    positional and leaves the descriptor's shared offset alone. That is what
+    lets several workers read different ranges of the same file at once: a
+    bare seek-then-read pair would race, with two threads silently reading
+    each other's bytes. (Windows has no os.pread, so that helper falls back
+    to a locked seek-then-read there.)
     """
 
     def __init__(self, fd: int, offset: int, length: int) -> None:
@@ -125,7 +128,7 @@ class _FdSlice:
         size = min(size, remaining)
         if size <= 0:
             return b""
-        data = os.pread(self._fd, size, self._offset + self._pos)
+        data = pread(self._fd, size, self._offset + self._pos)
         self._pos += len(data)
         return data
 
@@ -140,7 +143,7 @@ def _slice_md5(fd: int, offset: int, length: int) -> str:
     digest = hashlib.md5()
     read = 0
     while read < length:
-        block = os.pread(fd, min(_HASH_BLOCK, length - read), offset + read)
+        block = pread(fd, min(_HASH_BLOCK, length - read), offset + read)
         if not block:
             break
         digest.update(block)
