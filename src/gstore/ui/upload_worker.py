@@ -239,7 +239,12 @@ class UploadWorker(QThread):
             )
         resume.file_md5 = whole_md5
         self.status.emit("Uploading…")
-        self.progress.emit(0.0)
+        # The bar was driven by the checksum pass; hand it back to the upload
+        # at the fraction already staged. Emitting 0.0 here would be a lie the
+        # UI cannot see through: it anchors the speed estimate, so a resume at
+        # 43% would be credited with having just sent those 8.7 GB.
+        already = sum(r.size_bytes for r in completed.values())
+        self.progress.emit(already / size if size else 0.0)
 
         creds_cache: dict[int, object] = {}
 

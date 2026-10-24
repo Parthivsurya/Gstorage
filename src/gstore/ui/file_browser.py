@@ -9,6 +9,8 @@ Gstore's index.
 
 from __future__ import annotations
 
+import time
+from collections import deque
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -32,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from gstore import config
-from gstore.format import human_bytes
+from gstore.format import human_bytes, human_duration, human_rate
 from gstore.index import FileEntry, IndexStore
 from gstore.ui.delete_worker import DeleteWorker
 from gstore.ui.download_worker import DownloadWorker
@@ -41,6 +43,10 @@ from gstore.ui.drive_scan_worker import DriveScanWorker, ScanResult, ScanRow
 from gstore.ui.drive_trash_worker import DriveTrashWorker
 from gstore.ui.thumbnail_worker import ThumbnailWorker
 from gstore.ui.upload_worker import UploadWorker
+
+# Trailing window for the speed estimate. Long enough to smooth out
+# per-chunk jitter, short enough to reflect the connection now.
+_RATE_WINDOW_SEC = 30.0
 
 # QListWidgetItem UserRole payload: (kind, id). For _DRIVE, id is the index of
 # the ScanRow within the current (search-filtered) live-scan result.
@@ -80,6 +86,9 @@ class FileBrowser(QWidget):
         self._upload_worker: UploadWorker | None = None
         self._transfer_message = ""
         self._transfer_total: int | None = None
+        # Recent (monotonic time, fraction) samples, for a *current* speed
+        # rather than an average over the whole run.
+        self._rate_samples: deque[tuple[float, float]] = deque()
         self._download_worker: DownloadWorker | None = None
         self._delete_worker: DeleteWorker | None = None
         self._scan_worker: DriveScanWorker | None = None
@@ -617,6 +626,7 @@ class FileBrowser(QWidget):
         self.transfer_bar.setVisible(True)
         self._transfer_message = message
         self._transfer_total = total_bytes
+        self._rate_samples.clear()
         self.transfer_status.setText(message)
         self._update_buttons()
 
@@ -641,7 +651,46 @@ class FileBrowser(QWidget):
             parts.append(
                 f"· {human_bytes(done)} of {human_bytes(self._transfer_total)}"
             )
+            rate, remaining = self._rate_and_eta(fraction)
+            if rate is not None:
+                parts.append(f"· {human_rate(rate)}")
+                parts.append(f"· {human_duration(remaining)} left")
         self.transfer_status.setText(" ".join(parts))
+
+    def _rate_and_eta(self, fraction: float) -> tuple[float | None, float | None]:
+        """Current speed and time remaining, or (None, None) while unknown.
+
+        Measured over a trailing window rather than the whole run, so the
+        figure tracks what the connection is doing now instead of being
+        dragged around by an early slow or fast patch.
+
+        Only progress made *within* the window counts, which is what keeps a
+        resume honest: picking up at 43% must not be read as having just sent
+        those 8.7 GB. (It was, once — the worker emitted 0.0 before the first
+        real sample, and the estimate came out at 68 MB/s with three minutes
+        left on an eleven-gigabyte remainder.)
+        """
+        total = self._transfer_total
+        if not total:
+            return None, None
+
+        now = time.monotonic()
+        self._rate_samples.append((now, fraction))
+        # Keep the window, but never discard so much that fewer than two
+        # samples remain to measure between.
+        while len(self._rate_samples) > 2 and now - self._rate_samples[0][0] > _RATE_WINDOW_SEC:
+            self._rate_samples.popleft()
+
+        start_time, start_fraction = self._rate_samples[0]
+        elapsed = now - start_time
+        sent = (fraction - start_fraction) * total
+        # Too little to be meaningful; an estimate off one sample is noise.
+        if elapsed < 3 or sent < 512 * 1024:
+            return None, None
+        rate = sent / elapsed
+        if rate <= 0:
+            return None, None
+        return rate, (1.0 - fraction) * total / rate
 
     def _on_transfer_progress(self, fraction: float) -> None:
         self.transfer_bar.setValue(int(fraction * 1000))
