@@ -27,5 +27,11 @@ packaging/google_reply_draft.md
 packaging/casa_kickoff.md
 CHANGES.md
 
+# Partial downloads. Gstore accumulates a chunked download in a sibling
+# .gstore-part file and renames it on success; a 20 GB one of those landing in
+# the repo because that is where the save dialog pointed should never be a
+# commit candidate.
+*.gstore-part
+
 # macOS
 .DS_Store
