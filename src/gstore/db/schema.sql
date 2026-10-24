@@ -111,3 +111,22 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_id);
+
+-- Chunks of a chunked download already written into the output file.
+--
+-- Parallel workers complete out of order, so the output file's length no
+-- longer says how far a download got — it is preallocated to full size from
+-- the start and filled in at offsets. This table is the resume state instead.
+-- Keyed to the destination path plus the file's identity, so pointing a new
+-- download at the same path starts clean.
+CREATE TABLE IF NOT EXISTS download_progress (
+    dest_path   TEXT NOT NULL,
+    file_id     INTEGER NOT NULL,
+    total_bytes INTEGER NOT NULL,
+    sequence    INTEGER NOT NULL,
+    size_bytes  INTEGER NOT NULL,
+    PRIMARY KEY (dest_path, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_download_progress_dest
+    ON download_progress(dest_path, file_id, total_bytes);

@@ -12,6 +12,7 @@ from gstore.drive.chunk_download import NotEnoughSpace, download_chunks
 from gstore.drive.download import download_file
 from gstore.drive.rate_limit import Cancelled
 from gstore.index import IndexStore
+from gstore.index.download_progress import DownloadProgress
 
 log = get_logger(__name__)
 
@@ -48,7 +49,7 @@ class DownloadWorker(QThread):
                 return
 
             if entry.is_chunked:
-                self._download_chunked(accounts, index)
+                self._download_chunked(accounts, index, db)
                 return
 
             if not entry.drive_file_id or entry.home_account_id is None:
@@ -84,24 +85,28 @@ class DownloadWorker(QThread):
         finally:
             db.close()
 
-    def _download_chunked(self, accounts, index) -> None:
+    def _download_chunked(self, accounts, index, db) -> None:
         chunks = index.list_chunks(self.file_id)
         entry = index.get_file(self.file_id)
+
+        # Resolve every account's credentials up front. Workers run on other
+        # threads and SQLite connections belong to the thread that opened
+        # them, so nothing may reach back into the database from a worker.
         creds_cache: dict[int, object] = {}
+        for account_id in {c.account_id for c in chunks}:
+            creds_cache[account_id] = accounts.get_credentials(account_id)
 
         def credentials_for(account_id: int):
-            creds = creds_cache.get(account_id)
-            if creds is None:
-                creds = accounts.get_credentials(account_id)  # may RefreshError
-                creds_cache[account_id] = creds
-            return creds
+            return creds_cache[account_id]
 
         total = sum(c.size_bytes for c in chunks)
         if total:
             self.total_bytes.emit(total)
 
         def announce(number: int, count: int) -> None:
-            self.status.emit(f"Downloading chunk {number} of {count}…")
+            # Chunks complete out of order now, so this is "how many are done"
+            # rather than "which one is in flight".
+            self.status.emit(f"Downloaded {number} of {count} chunks…")
 
         try:
             download_chunks(
@@ -112,6 +117,8 @@ class DownloadWorker(QThread):
                 on_progress=self.progress.emit,
                 on_chunk=announce,
                 should_stop=self.isInterruptionRequested,
+                progress_store=DownloadProgress(db),
+                file_id=self.file_id,
             )
         except RefreshError:
             self.failed.emit(

@@ -43,29 +43,29 @@ def _make_chunk(sequence: int, drive_id: str, md5: str, size: int) -> Chunk:
 
 @pytest.fixture
 def fake_download(monkeypatch):
-    """Install a fake download_file backed by an in-memory byte store.
+    """Install a fake _fetch_chunk backed by an in-memory byte store.
 
     Returns the mutable store dict; tests populate it with
-    {drive_file_id: bytes}. The fake replicates real download_file behaviour:
-    write bytes to dest, verify against expected_md5, and remove the file on a
-    checksum mismatch before raising IntegrityError.
+    {drive_file_id: bytes}. The fake mirrors the real worker: write the chunk
+    into the output file at its offset, verify it against the chunk's md5, and
+    raise IntegrityError on a mismatch.
     """
     store: dict[str, bytes] = {}
 
-    def _fake(credentials, drive_file_id, dest_path, on_progress=None, expected_md5=None):
-        from pathlib import Path
+    def _fake(credentials, chunk, fd, offset, should_stop=None):
+        import os as _os
 
-        data = store[drive_file_id]
-        dest = Path(dest_path)
-        dest.write_bytes(data)
-        if expected_md5 and _md5(data) != expected_md5:
-            dest.unlink(missing_ok=True)
-            raise IntegrityError(f"chunk {drive_file_id}: checksum mismatch")
-        if on_progress is not None:
-            on_progress(1.0)
-        return dest
+        if should_stop is not None and should_stop():
+            from gstore.drive.rate_limit import Cancelled
 
-    monkeypatch.setattr(chunk_download, "download_file", _fake)
+            raise Cancelled("download cancelled")
+        data = store[chunk.drive_file_id]
+        if chunk.md5 and _md5(data) != chunk.md5:
+            raise IntegrityError(f"chunk {chunk.sequence}: checksum mismatch")
+        _os.pwrite(fd, data, offset)
+        return len(data)
+
+    monkeypatch.setattr(chunk_download, "_fetch_chunk", _fake)
     return store
 
 

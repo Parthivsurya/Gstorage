@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -48,6 +48,17 @@ _MIGRATIONS: dict[int, list[str]] = {
         " PRIMARY KEY (local_path, sequence))"
     ],
     8: ["ALTER TABLE pending_chunks ADD COLUMN file_md5 TEXT"],
+    9: [
+        "CREATE TABLE IF NOT EXISTS download_progress ("
+        " dest_path TEXT NOT NULL,"
+        " file_id INTEGER NOT NULL,"
+        " total_bytes INTEGER NOT NULL,"
+        " sequence INTEGER NOT NULL,"
+        " size_bytes INTEGER NOT NULL,"
+        " PRIMARY KEY (dest_path, sequence))",
+        "CREATE INDEX IF NOT EXISTS idx_download_progress_dest"
+        " ON download_progress(dest_path, file_id, total_bytes)",
+    ],
 }
 
 
