@@ -1,169 +1,207 @@
-"""Render a 9:16 story poster announcing a release.
+"""Render a 9:16 story card explaining what Gstore is.
 
     .venv/bin/python packaging/make_poster.py
 
 Writes assets/social/release-<version>-story.png at 1080x1920, the size
-Instagram, WhatsApp and Threads stories expect. Everything is drawn here
-rather than exported from a design tool so the next release is one command
-away rather than an afternoon.
+Instagram, WhatsApp and Threads stories expect. make_release_card.py renders
+a different design, dark and notes-shaped; both are kept.
+
+Deliberately plain: white ground, black text, left aligned, no gradients or
+ornament. Someone seeing this once while scrolling should finish it knowing
+what the app is, what they would do with it and what is inside, so the page
+is packed rather than airy -- labelled sections, bold lead-ins to scan by, no
+decorative space. The logo sits top right so the whole left edge stays a text
+column.
+
+Two things the wording has to keep getting right. "One drive" is avoided
+throughout: it reads as Microsoft OneDrive. And splitting is described as the
+fallback it actually is -- a file that fits goes whole to one account, and
+only a file too big for any single account is cut into 50 MB pieces -- which
+is also the one idea the diagram is here to carry.
 """
 
 from __future__ import annotations
 
-import math
+import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
-from gstore import __version__
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cardkit import font, rich                              # noqa: E402
+
+from gstore import __version__                              # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "assets" / "social"
+
 W, H = 1080, 1920
+M = 74                      # side margin
+COL = W - 2 * M
 
-FONT = "/System/Library/Fonts/SFNS.ttf"
+PAPER = (255, 255, 255)
+INK = (17, 20, 24)
+MUTED = (104, 116, 130)
+RULE = (214, 220, 227)
+ACCENT = (21, 101, 192)
 
-INK = (255, 255, 255)
-DIM = (150, 163, 178)
-BG = (9, 12, 17)
-BLUE = (58, 150, 255)
-GREEN = (72, 214, 160)
+FILLS = {"r": INK, "b": INK, "m": MUTED, "l": ACCENT}
+SOFT = {"r": MUTED, "b": INK, "m": MUTED, "l": ACCENT}
 
-
-def font(size: int, weight: str = "Regular") -> ImageFont.FreeTypeFont:
-    f = ImageFont.truetype(FONT, size)
-    try:
-        f.set_variation_by_name(weight)
-    except Exception:
-        pass  # a non-variable fallback still renders, just at one weight
-    return f
+BODY, LEAD = 29, 25
 
 
-def text_width(draw, s: str, f) -> int:
-    return draw.textbbox((0, 0), s, font=f)[2]
+def centred(draw, box, y, text, f, fill=INK) -> None:
+    x0, x1 = box
+    w = draw.textbbox((0, 0), text, font=f)[2]
+    draw.text((x0 + (x1 - x0 - w) / 2, y), text, font=f, fill=fill)
 
 
-def centred(draw, y: int, s: str, f, fill=INK) -> int:
-    """Draw `s` centred on the canvas; return the y below it."""
-    box = draw.textbbox((0, 0), s, font=f)
-    draw.text(((W - box[2]) / 2, y), s, font=f, fill=fill)
-    return y + (box[3] - box[1]) + box[1]
+def section(draw, y: int, label: str) -> int:
+    """A hairline and a small caps label: free structure, almost no height."""
+    draw.line([M, y, W - M, y], fill=RULE, width=2)
+    f = font(22, "Semibold")
+    draw.text((M, y + 17), label.upper(), font=f, fill=MUTED)
+    return y + 17 + draw.textbbox((0, 0), label.upper(), font=f)[3] + 19
 
 
-def backdrop() -> Image.Image:
-    """Dark ground with a blue-to-green glow behind the mark."""
-    img = Image.new("RGB", (W, H), BG)
-    px = img.load()
-    cx, cy, radius = W / 2, 560, 980
-    for y in range(H):
-        for x in range(0, W, 2):          # every other column, then smoothed
-            d = math.hypot(x - cx, y - cy) / radius
-            if d >= 1:
-                continue
-            t = (1 - d) ** 2.4 * 0.55
-            mix = min(1.0, max(0.0, (x / W) * 0.65 + (y / H) * 0.35))
-            r = BG[0] + (BLUE[0] * (1 - mix) + GREEN[0] * mix - BG[0]) * t
-            g = BG[1] + (BLUE[1] * (1 - mix) + GREEN[1] * mix - BG[1]) * t
-            b = BG[2] + (BLUE[2] * (1 - mix) + GREEN[2] * mix - BG[2]) * t
-            px[x, y] = (int(r), int(g), int(b))
-            if x + 1 < W:
-                px[x + 1, y] = (int(r), int(g), int(b))
-    return img
+def bullets(draw, y: int, items, gap: int = 15) -> int:
+    for runs in items:
+        draw.ellipse([M + 2, y + 11, M + 11, y + 20], fill=ACCENT)
+        y = rich(draw, M + 32, y, runs, LEAD, COL - 32, FILLS, leading=6) + gap
+    return y - gap
 
 
-def pool_diagram(draw, y: int) -> int:
-    """Three account bars merging into one — the idea in one picture."""
-    pad, gap = 110, 18
-    width = W - pad * 2
-    cell = (width - gap * 2) / 3
+def steps(draw, y: int, items, gap: int = 15) -> int:
+    nf = font(LEAD, "Bold")
+    for i, runs in enumerate(items, 1):
+        draw.text((M, y), str(i), font=nf, fill=ACCENT)
+        y = rich(draw, M + 32, y, runs, LEAD, COL - 32, FILLS, leading=6) + gap
+    return y - gap
 
-    label = font(30, "Medium")
-    for i in range(3):
-        x = pad + i * (cell + gap)
-        draw.rounded_rectangle([x, y, x + cell, y + 96], radius=18,
-                               fill=(26, 33, 44), outline=(48, 60, 76), width=2)
-        s = "15 GB"
-        draw.text((x + (cell - text_width(draw, s, label)) / 2, y + 32),
-                  s, font=label, fill=DIM)
 
-    arrow_y = y + 136
-    draw.line([W / 2, arrow_y, W / 2, arrow_y + 44], fill=(70, 86, 106), width=3)
-    draw.polygon([(W / 2 - 11, arrow_y + 44), (W / 2 + 11, arrow_y + 44),
-                  (W / 2, arrow_y + 64)], fill=(70, 86, 106))
+def diagram(draw, y: int) -> int:
+    """The fallback case, which is the hard one to say in a sentence.
 
-    bar_y = arrow_y + 92
-    bar = Image.new("RGB", (int(width), 112))
-    bp = bar.load()
-    for x in range(bar.width):
-        t = x / bar.width
-        bp_col = (int(BLUE[0] + (GREEN[0] - BLUE[0]) * t),
-                  int(BLUE[1] + (GREEN[1] - BLUE[1]) * t),
-                  int(BLUE[2] + (GREEN[2] - BLUE[2]) * t))
-        for yy in range(bar.height):
-            bp[x, yy] = bp_col
-    mask = Image.new("L", bar.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, bar.width - 1, bar.height - 1],
-                                           radius=22, fill=255)
-    draw._image.paste(bar, (pad, bar_y), mask)
+    Drawn as a branch rather than a single arrow: one box wide enough to read
+    as "bigger than any of the three", a stem, and an arrowhead into each
+    account. It costs about 260px of height, which is why the sections around
+    it are written tight.
+    """
+    bar_h = 78
+    draw.rounded_rectangle([M, y, W - M, y + bar_h], radius=12,
+                           outline=INK, width=3)
+    centred(draw, (M, W - M), y + 20, "one 20 GB file", font(34, "Semibold"))
+    y += bar_h
 
-    big = font(46, "Bold")
-    s = "45 GB, one drive"
-    draw.text(((W - text_width(draw, s, big)) / 2, bar_y + 31),
-              s, font=big, fill=(10, 16, 24))
-    return bar_y + 112
+    gap = 16
+    cell_w = (COL - 2 * gap) // 3
+    centres = [M + i * (cell_w + gap) + cell_w // 2 for i in range(3)]
+    mid, drop = W // 2, 42
+    draw.line([mid, y, mid, y + drop], fill=INK, width=3)
+    draw.line([centres[0], y + drop, centres[-1], y + drop], fill=INK, width=3)
+    for cx in centres:
+        draw.line([cx, y + drop, cx, y + drop + 26], fill=INK, width=3)
+        draw.polygon([(cx - 9, y + drop + 23), (cx + 9, y + drop + 23),
+                      (cx, y + drop + 41)], fill=INK)
+    draw.text((mid + 20, y + 6), "split into 50 MB pieces",
+              font=font(25), fill=MUTED)
+    y += drop + 45
+
+    cell_h = 94
+    for i, cx in enumerate(centres):
+        x0 = cx - cell_w // 2
+        draw.rounded_rectangle([x0, y, x0 + cell_w, y + cell_h], radius=12,
+                               outline=RULE, width=3)
+        centred(draw, (x0, x0 + cell_w), y + 17, f"account {i + 1}",
+                font(23), MUTED)
+        centred(draw, (x0, x0 + cell_w), y + 49, "15 GB", font(31, "Semibold"))
+    return y + cell_h
 
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    img = backdrop()
+    img = Image.new("RGB", (W, H), PAPER)
     draw = ImageDraw.Draw(img)
-    draw._image = img  # pool_diagram pastes through this
 
-    # mark
+    # --- identity: text down the left, logo parked top right ---------------
     logo = Image.open(ROOT / "assets" / "gstore_logo_512.png").convert("RGBA")
-    logo = logo.resize((232, 232), Image.LANCZOS)
-    img.paste(logo, ((W - 232) // 2, 168), logo)
+    logo = logo.resize((96, 96), Image.LANCZOS)
+    img.paste(logo, (W - M - 96, 54), logo)
+    draw.text((M, 54), "Gstore", font=font(44, "Bold"), fill=INK)
+    draw.text((M, 108), "pooled Google Drive storage  ·  "
+              f"version {__version__}", font=font(24), fill=MUTED)
 
-    y = 452
-    y = centred(draw, y, "Gstore", font(104, "Bold")) + 18
+    y = rich(draw, M, 176, [("Pool the free space in all your "
+                             "Google accounts.", "b")],
+             56, COL, FILLS, leading=4)
 
-    badge = f"version {__version__}"
-    bf = font(30, "Semibold")
-    bw = text_width(draw, badge, bf)
-    draw.rounded_rectangle([(W - bw) / 2 - 26, y - 6, (W + bw) / 2 + 26, y + 52],
-                           radius=29, fill=(26, 33, 44), outline=(52, 66, 84), width=2)
-    draw.text(((W - bw) / 2, y + 10), badge, font=bf, fill=(150, 200, 255))
-    y += 104
+    y = rich(draw, M, y + 20, [
+        ("Every Google account comes with 15 GB free. Three accounts is "
+         "45 GB — but as three separate silos. Gstore lays ", "r"),
+        ("one folder tree", "b"),
+        (" over all of them and remembers where everything went.", "r"),
+    ], BODY, COL, SOFT, leading=8)
 
-    y = centred(draw, y, "Pool the free space of several", font(44, "Regular"), DIM)
-    y = centred(draw, y + 14, "Google accounts into one drive", font(44, "Regular"), DIM)
+    # --- the concept ------------------------------------------------------
+    y = section(draw, y + 26, "The idea")
+    y = bullets(draw, y, [
+        [("Accounts stop being silos.", "b"),
+         (" One folder tree covers all of them, so a single folder can hold "
+          "files that physically live on three different accounts.", "r")],
+        [("A file goes whole to one account", "b"),
+         (" — whichever has the most room free. Nothing is cut up "
+          "needlessly, and Drive's own preview keeps working.", "r")],
+        [("Only a file too big for any single account is split", "b"),
+         (" — into 50 MB pieces, spread across several:", "r")],
+    ])
 
-    y = pool_diagram(draw, y + 88) + 118
+    y = diagram(draw, y + 24)
 
-    # Three short lines, not three sentences. A story is scrolled past, not
-    # read, so each point has to land in one glance.
-    points = [
-        "Splits big files across accounts",
-        "Resumes interrupted transfers",
-        "Runs entirely on your machine",
-    ]
-    body = font(44, "Regular")
-    dot = font(44, "Bold")
-    for line in points:
-        w = text_width(draw, line, body) + 38
-        x = (W - w) / 2
-        draw.text((x, y), "\u2022", font=dot, fill=GREEN)
-        draw.text((x + 38, y), line, font=body, fill=(214, 223, 234))
-        y += 76
+    # --- what you do ------------------------------------------------------
+    y = section(draw, y + 28, "What you do")
+    y = steps(draw, y, [
+        [("Sign in", "b"), (" with every Google account you own.", "r")],
+        [("Upload a file.", "b"),
+         (" It lands whole on whichever account has the most room free.", "r")],
+        [("Download it back", "b"),
+         (" — Gstore fetches it and rebuilds a split file.", "r")],
+    ])
 
-    # Footer flows below the content rather than sitting at a fixed offset —
-    # a hardcoded y collided with the body on the first attempt.
-    y = max(y + 72, H - 250)
-    y = centred(draw, y, "macOS  \u00b7  Windows  \u00b7  Linux",
-                font(32, "Medium"), DIM) + 46
-    y = centred(draw, y, "gstore.iampkb.dev", font(48, "Semibold"), (120, 200, 255))
-    if y > H - 40:
-        print(f"warning: content runs to y={y}, past the {H}px canvas")
+    # --- what is in it ----------------------------------------------------
+    y = section(draw, y + 28, "What is in it")
+    y = bullets(draw, y, [
+        [("One pooled total", "b"),
+         (" across every account, with a bar for each.", "r")],
+        [("List, Grid and Gallery", "b"),
+         (" views, with real Drive thumbnails.", "r")],
+        [("Scan Drive", "b"),
+         (" lists every file across all your accounts, live.", "r")],
+    ])
+
+    # --- the things people ask --------------------------------------------
+    y = section(draw, y + 24, "Good to know")
+    y = bullets(draw, y, [
+        [("No Gstore server, no Gstore account.", "b"),
+         (" Bytes go straight to Google.", "r")],
+        [("Checked end to end", "b"),
+         (" — a download lands only once its checksum matches.", "r")],
+        [("Sign-in tokens are encrypted", "b"),
+         (", the key kept in your OS keychain.", "r")],
+    ])
+
+    # --- where to get it --------------------------------------------------
+    y = max(y + 28, H - 148)
+    draw.line([M, y, W - M, y], fill=RULE, width=2)
+    y += 28
+    draw.text((M, y), "gstore.iampkb.dev", font=font(42, "Semibold"),
+              fill=ACCENT)
+    draw.text((M, y + 60), "Free download · macOS, Windows, Linux · "
+              "no sign-up with us", font=font(24), fill=MUTED)
+
+    if (bottom := y + 60 + 32) > H - 22:
+        print(f"  warning: content runs to y={bottom}, past the {H}px canvas")
 
     path = OUT / f"release-{__version__}-story.png"
     img.save(path)
