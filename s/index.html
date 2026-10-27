@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A file was shared with you · Gstore</title>
+<meta name="description" content="Someone shared a file with you using Gstore. Open the link in Gstore to download it — no account needed.">
+<meta name="robots" content="noindex">
+<link rel="icon" href="../assets/gstore_favicon_32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../assets/gstore_apple_touch_icon.png">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  /* This page is one short column; the landing page's section rhythm would
+     leave it stranded in whitespace. */
+  .share    { max-width: 44rem; margin: 0 auto; padding: 3.5rem 1.25rem 4rem; }
+  .share h1 { font-size: clamp(1.6rem, 4vw, 2.1rem); line-height: 1.2;
+              letter-spacing: -.02em; margin: 0 0 .6rem; }
+  .share__lede { color: var(--ink-2); font-size: 1.05rem; margin: 0 0 2rem; }
+  .steps    { counter-reset: step; list-style: none; padding: 0; margin: 0 0 2rem; }
+  .steps li { counter-increment: step; position: relative;
+              padding: 0 0 1.1rem 2.5rem; }
+  .steps li::before {
+    content: counter(step); position: absolute; left: 0; top: -.1rem;
+    width: 1.65rem; height: 1.65rem; border-radius: 50%;
+    background: var(--accent-wash); color: var(--accent);
+    border: 1px solid var(--accent-line);
+    display: grid; place-items: center; font-size: .85rem; font-weight: 650;
+  }
+  .linkbox  { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+              background: var(--surface); border: 1px solid var(--line);
+              border-radius: 12px; padding: .75rem; margin: 0 0 2rem; }
+  .linkbox code { flex: 1 1 16rem; min-width: 0; overflow-x: auto;
+                  white-space: nowrap; font-size: .82rem; color: var(--ink-2);
+                  padding: .35rem .2rem; }
+  .note     { border-left: 3px solid var(--accent-line);
+              background: var(--accent-wash); border-radius: 0 8px 8px 0;
+              padding: .85rem 1rem; margin: 0 0 2rem; font-size: .93rem;
+              color: var(--ink-2); }
+  .note strong { color: var(--ink); }
+  .share__foot { border-top: 1px solid var(--line); padding-top: 1.25rem;
+                 color: var(--ink-3); font-size: .9rem; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav__in">
+    <a class="brand" href="/" style="text-decoration:none;color:inherit">
+      <img class="mark" src="../assets/gstore_logo_256.png" alt="" width="26" height="26" decoding="async">
+      <span class="brand__name">Gstore</span>
+    </a>
+    <a class="btn btn--ghost btn--sm" href="/">What is Gstore?</a>
+  </div>
+</header>
+
+<main class="share">
+
+  <h1>Someone shared a file with you</h1>
+  <p class="share__lede">
+    This link points at a file stored with Gstore. To download it you need
+    Gstore itself — but you do <strong>not</strong> need an account of any
+    kind, and you do not need the sender's Google accounts.
+  </p>
+
+  <div class="linkbox">
+    <code id="link">…</code>
+    <button class="btn btn--sm" id="copy" type="button">Copy link</button>
+  </div>
+
+  <ol class="steps">
+    <li>
+      <strong>Install Gstore</strong> if you do not have it —
+      <a href="/#download">macOS, Windows or Linux</a>. It is a free download.
+    </li>
+    <li><strong>Open the Files tab</strong> and click <strong>Open link…</strong></li>
+    <li>
+      <strong>Paste this link.</strong> Gstore shows you what the file is and
+      how big it is before downloading anything, then asks where to save it.
+    </li>
+  </ol>
+
+  <p class="note">
+    <strong>This page never sees the link.</strong> Everything that identifies
+    the file sits after the <code>#</code>, and browsers never send that part
+    of a URL to a website. It is read only by the copy button above, in your
+    own browser. Nothing about what you are downloading reaches us — we run no
+    server that could receive it.
+  </p>
+
+  <p class="share__foot">
+    Files shared this way move directly between Google and whoever holds the
+    link. The sender can withdraw it at any time, after which it stops working.
+    <a href="/PRIVACY">Privacy policy</a> · <a href="/">About Gstore</a>
+  </p>
+
+</main>
+
+<script>
+  // The fragment is read here and nowhere else: it never goes into a request,
+  // an analytics call, or the page title. There is no server to send it to.
+  (function () {
+    var link = location.href;
+    var out = document.getElementById('link');
+    var copy = document.getElementById('copy');
+
+    if (!location.hash || location.hash.length < 2) {
+      out.textContent = 'No link found — check you copied the whole thing, including the part after the #.';
+      copy.disabled = true;
+      return;
+    }
+    out.textContent = link;
+
+    copy.addEventListener('click', function () {
+      navigator.clipboard.writeText(link).then(function () {
+        copy.textContent = 'Copied';
+        setTimeout(function () { copy.textContent = 'Copy link'; }, 2000);
+      }, function () {
+        // Clipboard access can be refused; selecting the text still works.
+        var range = document.createRange();
+        range.selectNodeContents(out);
+        var selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        copy.textContent = 'Press ⌘C / Ctrl+C';
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>
