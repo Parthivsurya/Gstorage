@@ -160,11 +160,12 @@ def test_the_request_is_anonymous(monkeypatch):
         def __exit__(self, *a):
             return False
 
-    def fake_urlopen(request, timeout=None):
+    def fake_urlopen(request, timeout=None, context=None):
         captured["url"] = request.full_url
         captured["headers"] = dict(request.header_items())
         captured["data"] = request.data
         captured["method"] = request.get_method()
+        captured["context"] = context
         return FakeResponse()
 
     monkeypatch.setattr(update.urllib.request, "urlopen", fake_urlopen)
@@ -176,6 +177,40 @@ def test_the_request_is_anonymous(monkeypatch):
     sent = " ".join(f"{k}:{v}" for k, v in captured["headers"].items()).lower()
     for forbidden in ("authorization", "cookie", "token", "@"):
         assert forbidden not in sent
+
+
+def test_the_request_verifies_the_certificate(monkeypatch):
+    """Anonymous must not mean unverified.
+
+    Shipped builds had no CA store at all, so this call failed every time and
+    the feature was dead in v0.1.0 without ever saying so. See gstore.tls.
+    """
+    import ssl
+
+    captured = {}
+
+    class FakeResponse:
+        def read(self):
+            return json.dumps(_payload()).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(request, timeout=None, context=None):
+        captured["context"] = context
+        return FakeResponse()
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", fake_urlopen)
+    update.fetch_latest()
+
+    context = captured["context"]
+    assert context is not None, "urlopen was called without an SSL context"
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert len(context.get_ca_certs()) > 0, "the context trusts no CAs"
 
 
 # -- the switch --------------------------------------------------------------

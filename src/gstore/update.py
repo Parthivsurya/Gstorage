@@ -22,6 +22,8 @@ import json
 import re
 import urllib.error
 import urllib.request
+
+from gstore.tls import ssl_context
 from dataclasses import dataclass
 
 from gstore.applog import get as get_logger
@@ -82,7 +84,9 @@ def fetch_latest(timeout: int = TIMEOUT_SEC) -> dict | None:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(
+            request, timeout=timeout, context=ssl_context()
+        ) as response:
             return json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
         # Offline, rate-limited, or GitHub having a bad day. None of that is

@@ -15,6 +15,8 @@ dependencies = [
     "google-api-python-client>=2.130",
     "keyring>=25.0",
     "cryptography>=42.0",
+    # Stdlib urllib has no CA store in a packaged build; see gstore.tls.
+    "certifi>=2024.2",
 ]
 
 [project.optional-dependencies]
