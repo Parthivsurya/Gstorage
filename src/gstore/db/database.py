@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -48,6 +48,15 @@ _MIGRATIONS: dict[int, list[str]] = {
         " PRIMARY KEY (local_path, sequence))"
     ],
     8: ["ALTER TABLE pending_chunks ADD COLUMN file_md5 TEXT"],
+    10: [
+        "CREATE TABLE IF NOT EXISTS shares ("
+        " file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,"
+        " manifest_file_id TEXT NOT NULL,"
+        " manifest_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,"
+        " link TEXT NOT NULL,"
+        " part_count INTEGER NOT NULL DEFAULT 0,"
+        " shared_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    ],
     9: [
         "CREATE TABLE IF NOT EXISTS download_progress ("
         " dest_path TEXT NOT NULL,"

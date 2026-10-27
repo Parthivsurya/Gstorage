@@ -130,3 +130,21 @@ CREATE TABLE IF NOT EXISTS download_progress (
 
 CREATE INDEX IF NOT EXISTS idx_download_progress_dest
     ON download_progress(dest_path, file_id, total_bytes);
+
+-- One row per file that currently has a public link. Keyed by file so a file
+-- has exactly one current link; re-sharing replaces the row rather than
+-- leaving a second manifest nobody can withdraw.
+--
+-- `link` holds the key that decrypts the manifest, in the clear. That is a
+-- deliberate trade: without it "copy the link again" would have to re-share,
+-- minting a new key and orphaning the old manifest on Drive. What it exposes
+-- is access to files the user has already chosen to make public, and it is
+-- recorded in the privacy policy. Account tokens remain encrypted.
+CREATE TABLE IF NOT EXISTS shares (
+    file_id             INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    manifest_file_id    TEXT NOT NULL,
+    manifest_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+    link                TEXT NOT NULL,
+    part_count          INTEGER NOT NULL DEFAULT 0,
+    shared_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);

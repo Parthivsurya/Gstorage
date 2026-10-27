@@ -265,3 +265,38 @@ def test_upgraded_db_accepts_a_cached_digest(tmp_path):
     row = db.conn.execute("SELECT file_md5 FROM pending_chunks").fetchone()
     assert row["file_md5"] == "cached"
     db.close()
+
+
+def test_v1_db_gains_the_shares_table(tmp_path):
+    # A share's manifest id lives nowhere but this table once the link has
+    # been handed out, so an upgrade that skipped it would leave older
+    # installs unable to withdraw anything they share.
+    path = tmp_path / "legacy.db"
+    _write_v1_db(path)
+
+    db = Database(path).open().initialize()
+
+    assert db._table_exists("shares")
+    assert {"file_id", "manifest_file_id", "manifest_account_id", "link",
+            "part_count", "shared_at"} <= set(_columns(db.conn, "shares"))
+    db.close()
+
+
+def test_upgraded_db_accepts_a_share(tmp_path):
+    path = tmp_path / "legacy.db"
+    _write_v1_db(path)
+    db = Database(path).open().initialize()
+
+    cursor = db.conn.execute(
+        "INSERT INTO files(name, size_bytes) VALUES('shared.bin', 10)"
+    )
+    db.conn.execute(
+        "INSERT INTO shares(file_id, manifest_file_id, manifest_account_id,"
+        " link, part_count) VALUES(?, 'm-1', NULL, 'https://x/s#m-1.k', 3)",
+        (cursor.lastrowid,),
+    )
+    db.conn.commit()
+
+    row = db.conn.execute("SELECT link, part_count FROM shares").fetchone()
+    assert row["link"].endswith("#m-1.k") and row["part_count"] == 3
+    db.close()
