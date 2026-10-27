@@ -41,7 +41,11 @@ from cryptography.fernet import Fernet, InvalidToken
 # refuses a manifest newer than it knows rather than guessing.
 FORMAT_VERSION = 1
 
-SHARE_BASE_URL = "https://gstore.iampkb.dev/s"
+# Trailing slash deliberately: the server 301s /s to /s/, and while browsers
+# do carry a fragment across a redirect, a share link is forwarded through
+# chat apps and mail clients that rewrite URLs. Not depending on it costs one
+# character.
+SHARE_BASE_URL = "https://gstore.iampkb.dev/s/"
 
 # Drive ids and urlsafe-base64 both draw from [A-Za-z0-9_-], so the separator
 # has to come from outside that alphabet or the two halves cannot be told

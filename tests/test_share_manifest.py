@@ -142,7 +142,7 @@ def test_the_key_is_not_padded_with_noise():
         lambda link: f"  {link}  ",            # pasted with whitespace
         lambda link: f"<{link}>",              # a chat client wrapped it
         lambda link: link.partition("#")[2],   # only the fragment copied
-        lambda link: link.replace("/s#", "/s/#"),
+        lambda link: link.replace("/s/#", "/s#"),   # the pre-redirect spelling
     ],
     ids=["whitespace", "angle-brackets", "fragment-only", "trailing-slash"],
 )
