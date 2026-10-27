@@ -24,6 +24,9 @@ four times slower.*
 It is a desktop app, and it is **local-only**. File bytes travel straight
 between your machine and Google's servers. There is no Gstore server, no Gstore
 account, and nothing to sign up for — see the [privacy policy](PRIVACY.md).
+That holds for [sharing](#sharing-a-file-by-link) too: a shared file goes
+straight from Google to whoever holds the link, and the link itself never
+reaches a server of ours.
 
 ```
 ┌───────────────────── your machine ─────────────────────┐
@@ -191,6 +194,51 @@ exponentially on `429`, `500`, `502`, `503`, `403 rateLimitExceeded` /
 `userRateLimitExceeded` — and on transport failures, which is the common case:
 a dropped link, a reset connection, DNS briefly vanishing. A blip slows a
 transfer down instead of ending it.
+
+### Sharing a file by link
+
+**Share** on the Files tab turns a stored file into a link anyone can download
+it with. The recipient needs Gstore, and nothing else — no Gstore account, no
+Google account, no sign-in, and none of the sender's accounts linked.
+
+That works because every piece is an ordinary Drive file Gstore created, so
+`drive.file` is enough to mark it readable by anyone holding its id. The
+recipient then fetches it over a plain HTTPS request with no token at all. No
+restricted scope is involved on either side.
+
+The link does not name the pieces. A 20 GB file is 409 of them, and listing
+their ids costs about 26 KB — far past what anyone can paste into a chat. So
+the list is itself uploaded to Drive as a small file, and the link points at
+that:
+
+```
+https://gstore.iampkb.dev/s#<manifest-id>.<key>
+                            └──────── fragment ────────┘
+```
+
+Two things follow from the shape of that URL:
+
+- **Everything identifying sits after the `#`.** Browsers never send a fragment
+  in a request, so the page that URL resolves to — a static page explaining how
+  to open the link — never learns which file is being shared. There is no
+  server in this feature at all.
+- **The list is encrypted, with the key only in the link.** Reaching the
+  manifest file without the link yields ciphertext, so the piece ids stay
+  unknown. That protects the ids, not the bytes: anyone you send the link to
+  can read the file and pass that ability on.
+
+**Stop sharing** makes every piece private again and deletes the manifest, so
+the link stops working — but, like any share link, it cannot recall a copy
+someone already downloaded. Gstore records which files have live links so a
+share can be withdrawn later; that record is the only thing that knows the
+manifest's id once the link has been handed out.
+
+Received files are verified the same way downloads are: each piece against its
+own checksum as it streams, then the whole file against the sender's, before
+the destination appears. That matters more here than elsewhere — an
+unauthenticated Drive endpoint answers a withdrawn or rate-limited share with
+an HTML page and a `200`, so "50 MB of HTML" is a real thing that can land
+mid-file.
 
 ### Keeping the index honest
 
