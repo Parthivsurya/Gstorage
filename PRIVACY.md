@@ -1,6 +1,6 @@
 # Gstore Privacy Policy
 
-_Last updated: 28 October 2026 (Gstore 0.1.0)_
+_Last updated: 28 October 2026_
 
 Gstore is a local-only desktop application that pools several of your own Google
 accounts into one unified virtual drive. This policy explains what data Gstore
@@ -12,6 +12,9 @@ Gstore runs entirely on your device. Your file data flows **directly between
 your machine and Google** and never passes through, nor is stored on, any server
 operated by the developer. The developer has no backend and never receives your
 files, your account contents, or your credentials.
+
+Nothing of yours is reachable by anyone else unless you choose to share a
+specific file by link — see [Sharing a file by link](#sharing-a-file-by-link).
 
 ## What Gstore accesses
 
@@ -69,6 +72,11 @@ system's application-data directory:
   the file being uploaded or the destination being downloaded to, along with its
   size, its modification time, and which pieces have already transferred. It is
   cleared when the transfer finishes.
+- **Share records**, if you share a file by link (see below). Each row holds
+  the link itself, which contains the key that opens it. That key is stored in
+  the clear, because otherwise offering you the link a second time would mean
+  re-sharing the file. It grants access only to files you have already chosen
+  to make public.
 - **A log file** (`gstore.log`, rotated at 2 MB and keeping three older copies).
   It records what the app did — transfers started and finished, chunk numbers,
   retries, and the text of any error — which includes **file names**. It does
@@ -91,10 +99,46 @@ None of this is transmitted to the developer or to any third party.
   a backup moved to another machine cannot be used to access your accounts —
   but treat it as sensitive and store it somewhere you control.
 
+## Sharing a file by link
+
+Gstore can turn a stored file into a link that anyone can download it with.
+Nothing is shared unless you ask for it, file by file. This is the one feature
+that makes anything of yours reachable by other people, so it is worth reading
+in full before using it.
+
+**What sharing does.** Each piece of the file is marked, on Google's side, as
+readable by anyone who knows that piece's Drive identifier — the same "anyone
+with the link" setting Google Drive offers. Gstore then writes the list of
+those identifiers into a small file, encrypts it, and puts the key in the link.
+
+**What this means in practice:**
+
+- Anyone holding the link can download the file. They need no Gstore account,
+  no Google account, and no sign-in of any kind.
+- The link can be forwarded. Treat it as you would the file itself.
+- **Stopping a share cannot recall a copy.** Withdrawing makes every piece
+  private again and deletes the list, so the link stops working — but anyone
+  who already downloaded the file keeps what they have.
+- Only files you explicitly share are affected. Everything else stays reachable
+  only by you.
+
+**The link is not sent to us.** Everything identifying the file sits after the
+`#` in the URL, and browsers never transmit that part to a website. If someone
+opens a share link in a browser they reach a page explaining how to open it in
+Gstore, and that page never receives the identifying half — not in a request,
+not in a log, not anywhere. We operate no server that could receive it.
+
+**What the recipient's copy of Gstore does.** It fetches the pieces straight
+from Google over an ordinary web request, with no account and no credentials,
+checks each one against its checksum, and verifies the rebuilt file before
+saving it. Nothing about the download reaches the sender or us.
+
 ## What Gstore does NOT do
 
 - It does not run any server, analytics, telemetry, or tracking.
-- It does not sell, share, or transmit your data to anyone.
+- It does not sell or transmit your data to anyone. Nothing of yours is made
+  reachable by another person unless you share a specific file yourself, as
+  described above.
 - It does not read, list, or touch files in your Drive that it did not create —
   unless you have explicitly enabled the optional full-Drive scope described
   above, and then only for files you select.
@@ -132,10 +176,15 @@ Account's [Third-party access settings](https://myaccount.google.com/permissions
 You can also remove an account inside Gstore, which deletes its stored
 (encrypted) tokens from your device.
 
+If you have shared any files, **stop sharing them before you remove anything**
+— withdrawing a link needs the record that Gstore keeps locally, and deleting
+that first leaves the pieces readable by anyone holding the link, with nothing
+left to withdraw it. You can still make them private by hand from Google Drive.
+
 To remove everything Gstore has written, delete:
 
-1. the application-data directory listed above — index, tokens, resume state
-   and log;
+1. the application-data directory listed above — index, tokens, resume state,
+   share records and log;
 2. any leftover `.gstore-part` files beside download destinations you chose;
 3. any index backups you exported yourself.
 
