@@ -17,6 +17,7 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -36,11 +37,19 @@ from PySide6.QtWidgets import (
 from gstore import config
 from gstore.format import human_bytes, human_duration, human_rate
 from gstore.index import FileEntry, IndexStore
+from gstore.index.shares import Shares
 from gstore.ui.delete_worker import DeleteWorker
 from gstore.ui.download_worker import DownloadWorker
 from gstore.ui.drive_download_worker import DriveDownloadWorker
 from gstore.ui.drive_scan_worker import DriveScanWorker, ScanResult, ScanRow
 from gstore.ui.drive_trash_worker import DriveTrashWorker
+from gstore.ui.share_dialog import (
+    OpenShareDialog,
+    ShareConfirmDialog,
+    ShareLinkDialog,
+)
+from gstore.ui.share_download_worker import ResolveShareWorker, ShareDownloadWorker
+from gstore.ui.share_worker import ShareWorker, UnshareWorker
 from gstore.ui.thumbnail_worker import ThumbnailWorker
 from gstore.ui.upload_worker import UploadWorker
 
@@ -95,6 +104,15 @@ class FileBrowser(QWidget):
         self._drive_download_worker: DriveDownloadWorker | None = None
         self._drive_trash_worker: DriveTrashWorker | None = None
         self._trashing: ScanRow | None = None  # row being moved to Trash
+        self.shares = Shares(index.db)
+        self._share_worker: ShareWorker | None = None
+        self._unshare_worker: UnshareWorker | None = None
+        self._resolve_worker: ResolveShareWorker | None = None
+        self._share_download_worker: ShareDownloadWorker | None = None
+        # Files with a live link, refreshed with the listing so the marker in
+        # the list and the button label cannot disagree with the database.
+        self._shared_ids: set[int] = set()
+        self._sharing: tuple[int, str] | None = None  # (file id, name) in flight
 
         self._view_mode = _VIEW_LIST
         # Fetched Drive thumbnails, keyed by Drive file id, reused across renders.
@@ -133,6 +151,18 @@ class FileBrowser(QWidget):
         self.rename_button.clicked.connect(self._on_rename)
         self.delete_button = QPushButton("Delete")
         self.delete_button.clicked.connect(self._on_delete)
+        self.share_button = QPushButton("Share")
+        self.share_button.setToolTip(
+            "Create a link anyone can download this file with — no Gstore "
+            "account, no Google account, no sign-in."
+        )
+        self.share_button.clicked.connect(self._on_share)
+        self.open_link_button = QPushButton("Open link…")
+        self.open_link_button.setToolTip(
+            "Download a file someone shared with you. You do not need their "
+            "accounts linked."
+        )
+        self.open_link_button.clicked.connect(self._on_open_link)
         self.scan_button = QPushButton("Scan Drive now")
         self.scan_button.setToolTip(
             "List every file across all linked accounts, live from Google Drive."
@@ -146,9 +176,11 @@ class FileBrowser(QWidget):
             self.new_folder_button,
             self.rename_button,
             self.delete_button,
+            self.share_button,
         ):
             buttons.addWidget(button)
         buttons.addStretch()
+        buttons.addWidget(self.open_link_button)
         buttons.addWidget(self.scan_button)
 
         self.empty_hint = QLabel("This folder is empty.")
@@ -255,6 +287,10 @@ class FileBrowser(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
+        # Re-read before rendering: the marker in the list and the Share
+        # button's label both come from this, and a stale set would show a
+        # file as shared after it had been withdrawn.
+        self._shared_ids = self.shares.shared_file_ids()
         self._render_breadcrumb()
         self._render_entries()
         self._update_buttons()
@@ -495,9 +531,15 @@ class FileBrowser(QWidget):
             else:
                 reason = "home account removed"
             return f"⚠  {entry.name}    {size} · unavailable ({reason})"
+        # A live public link is worth seeing without selecting the row: it is
+        # the one property of a file here that is visible to other people.
+        shared = "  🔗" if entry.id in self._shared_ids else ""
         if entry.is_chunked:
-            return f"📄  {entry.name}    {size} · split into {entry.chunk_count} chunks"
-        return f"📄  {entry.name}    {size} · {entry.home_account_email}"
+            return (
+                f"📄  {entry.name}{shared}    {size} · split into "
+                f"{entry.chunk_count} chunks"
+            )
+        return f"📄  {entry.name}{shared}    {size} · {entry.home_account_email}"
 
     def _add_entry(
         self,
@@ -560,6 +602,10 @@ class FileBrowser(QWidget):
                 self._scan_worker,
                 self._drive_download_worker,
                 self._drive_trash_worker,
+                self._share_worker,
+                self._unshare_worker,
+                self._resolve_worker,
+                self._share_download_worker,
             )
         )
 
@@ -595,8 +641,10 @@ class FileBrowser(QWidget):
                 self.upload_button,
                 self.new_folder_button,
                 self.rename_button,
+                self.share_button,
             ):
                 button.setEnabled(False)
+            self.open_link_button.setEnabled(not busy)
             return
 
         is_file = selection is not None and selection[0] == _FILE
@@ -614,6 +662,13 @@ class FileBrowser(QWidget):
         self.upload_button.setEnabled(not busy and not self._searching)
         self.new_folder_button.setEnabled(not busy and not self._searching)
         self.download_button.setEnabled(downloadable and not busy)
+
+        # Sharing needs the same reachable bytes a download does: a file whose
+        # account is unlinked cannot have its pieces made public.
+        already_shared = is_file and selection[1] in self._shared_ids
+        self.share_button.setEnabled((downloadable or already_shared) and not busy)
+        self.share_button.setText("Shared…" if already_shared else "Share")
+        self.open_link_button.setEnabled(not busy)
         self.rename_button.setEnabled(selection is not None and not busy)
         self.delete_button.setEnabled(selection is not None and not busy)
 
@@ -728,8 +783,19 @@ class FileBrowser(QWidget):
         self._transfer_total = total or None
 
     def _on_cancel_upload(self) -> None:
-        worker = self._upload_worker or self._download_worker
+        worker = (
+            self._upload_worker
+            or self._download_worker
+            or self._share_download_worker
+        )
         if worker is None or not worker.isRunning():
+            return
+        if worker is self._share_download_worker:
+            # No resume for a shared download yet, so this really does discard
+            # what has arrived rather than pausing it.
+            self.cancel_button.setEnabled(False)
+            self.transfer_status.setText("Stopping…")
+            worker.stop()
             return
         # The worker checks between chunks and during retry backoff, so this is
         # not instant; disable the button so it cannot be pressed twice.
@@ -1005,4 +1071,202 @@ class FileBrowser(QWidget):
         self._drive_trash_worker = None
         self._trashing = None
         self.transfer_bar.setVisible(False)
+        self._update_buttons()
+
+    # -- sharing --------------------------------------------------------------
+
+    def _on_share(self) -> None:
+        if self._busy() or self._scanning:
+            return
+        selection = self._selected()
+        if selection is None or selection[0] != _FILE:
+            return
+
+        file_id = selection[1]
+        entry = self.index.get_file(file_id)
+        if entry is None:
+            return
+
+        existing = self.shares.get(file_id)
+        if existing is not None:
+            self._show_share_link(entry.name, existing)
+            return
+
+        part_count = entry.chunk_count if entry.is_chunked else 1
+        confirm = ShareConfirmDialog(entry.name, entry.size_bytes, part_count, self)
+        if confirm.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        worker = ShareWorker(file_id, self)
+        worker.progress.connect(self._on_share_progress)
+        worker.succeeded.connect(self._on_share_succeeded)
+        worker.failed.connect(self._on_share_failed)
+        worker.cancelled.connect(self._on_share_cancelled)
+        worker.finished.connect(self._on_share_finished)
+        self._share_worker = worker
+        # Held rather than re-read on completion: the selection can move while
+        # 409 permission calls run, and the link belongs to the file that was
+        # actually shared.
+        self._sharing = (file_id, entry.name)
+        self._begin_transfer("Creating the link…", determinate=part_count > 1)
+        worker.start()
+
+    def _on_share_progress(self, done: int, total: int) -> None:
+        if total:
+            self.transfer_bar.setValue(int(done / total * 1000))
+        self._set_transfer_message(f"Sharing piece {done} of {total}…")
+
+    def _on_share_succeeded(self, link: str, manifest_id: str, account_id: int, parts: int) -> None:
+        self.transfer_status.setText("Link created.")
+        self._shared_ids = self.shares.shared_file_ids()
+        if self._sharing is None:
+            return
+        file_id, name = self._sharing
+        row = self.shares.get(file_id)
+        if row is not None:
+            self._show_share_link(name, row)
+
+    def _on_share_failed(self, message: str) -> None:
+        self.transfer_status.setText("")
+        QMessageBox.warning(self, "Could not share", message)
+
+    def _on_share_cancelled(self) -> None:
+        self.transfer_status.setText("Sharing stopped.")
+        QMessageBox.information(
+            self,
+            "Sharing stopped",
+            "Some pieces may already be readable by anyone with their id. "
+            "Share the file again and then choose Stop sharing to make every "
+            "piece private.",
+        )
+
+    def _on_share_finished(self) -> None:
+        self._share_worker = None
+        self._sharing = None
+        self.transfer_bar.setVisible(False)
+        self.refresh()
+
+    def _show_share_link(self, name: str, row) -> None:
+        dialog = ShareLinkDialog(name, row.link, row.part_count, row.shared_at, self)
+        dialog.exec()
+        if dialog.stop_requested:
+            self._stop_sharing(row.file_id, name)
+
+    def _stop_sharing(self, file_id: int, name: str) -> None:
+        if self._busy():
+            return
+        worker = UnshareWorker(file_id, self)
+        worker.progress.connect(
+            lambda done, total: self._set_transfer_message(
+                f"Making piece {done} of {total} private…"
+            )
+        )
+        worker.succeeded.connect(self._on_unshare_succeeded)
+        worker.failed.connect(self._on_unshare_failed)
+        worker.cancelled.connect(self._on_unshare_cancelled)
+        worker.finished.connect(self._on_unshare_finished)
+        self._unshare_worker = worker
+        self._begin_transfer("Stopping the share…", determinate=False)
+        worker.start()
+
+    def _on_unshare_succeeded(self) -> None:
+        self.transfer_status.setText("The link no longer works.")
+
+    def _on_unshare_failed(self, message: str) -> None:
+        self.transfer_status.setText("")
+        QMessageBox.warning(self, "Could not stop sharing", message)
+
+    def _on_unshare_cancelled(self) -> None:
+        self.transfer_status.setText("Stopped partway.")
+        QMessageBox.information(
+            self,
+            "Not fully withdrawn",
+            "Some pieces are still readable by anyone with the link. The share "
+            "is still listed, so you can choose Stop sharing again to finish.",
+        )
+
+    def _on_unshare_finished(self) -> None:
+        self._unshare_worker = None
+        self.transfer_bar.setVisible(False)
+        self.refresh()
+
+    # -- opening someone else's share ----------------------------------------
+
+    def _on_open_link(self) -> None:
+        if self._busy():
+            return
+        dialog = OpenShareDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        worker = ResolveShareWorker(dialog.link(), self)
+        worker.resolved.connect(self._on_share_resolved)
+        worker.failed.connect(self._on_resolve_failed)
+        worker.finished.connect(self._on_resolve_finished)
+        self._resolve_worker = worker
+        self._begin_transfer("Reading the link…", determinate=False)
+        worker.start()
+
+    def _on_resolve_failed(self, message: str) -> None:
+        self.transfer_status.setText("")
+        QMessageBox.warning(self, "Could not open that link", message)
+
+    def _on_resolve_finished(self) -> None:
+        self._resolve_worker = None
+        self.transfer_bar.setVisible(False)
+        self._update_buttons()
+
+    def _on_share_resolved(self, manifest) -> None:
+        # Name and size first: choosing where to put a file before knowing how
+        # big it is, or what it is called, is asking the user to decide blind.
+        pieces = (
+            f"{len(manifest.parts)} pieces" if manifest.is_split else "a single file"
+        )
+        proceed = QMessageBox.question(
+            self,
+            "Download this file?",
+            f"<b>{manifest.name}</b><br>{human_bytes(manifest.size_bytes)} "
+            f"· stored as {pieces}<br><br>Download it now?",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok,
+            QMessageBox.StandardButton.Ok,
+        )
+        if proceed != QMessageBox.StandardButton.Ok:
+            return
+
+        dest, _ = QFileDialog.getSaveFileName(self, "Save shared file", manifest.name)
+        if not dest:
+            return
+
+        worker = ShareDownloadWorker(manifest, dest, self)
+        worker.progress.connect(self._on_share_download_progress)
+        worker.succeeded.connect(self._on_share_download_succeeded)
+        worker.failed.connect(self._on_share_download_failed)
+        worker.cancelled.connect(self._on_share_download_cancelled)
+        worker.finished.connect(self._on_share_download_finished)
+        self._share_download_worker = worker
+        self._begin_transfer(
+            "Downloading…", determinate=True, total_bytes=manifest.size_bytes
+        )
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setVisible(True)
+        worker.start()
+
+    def _on_share_download_progress(self, done: int, total: int) -> None:
+        if total:
+            self._on_transfer_progress(done / total)
+
+    def _on_share_download_succeeded(self, path: str) -> None:
+        self.transfer_status.setText(f"Saved to {path}")
+
+    def _on_share_download_failed(self, message: str) -> None:
+        self.transfer_status.setText("")
+        QMessageBox.warning(self, "Download failed", message)
+
+    def _on_share_download_cancelled(self) -> None:
+        self.transfer_status.setText("Download stopped.")
+
+    def _on_share_download_finished(self) -> None:
+        self._share_download_worker = None
+        self.transfer_bar.setVisible(False)
+        self.cancel_button.setVisible(False)
         self._update_buttons()

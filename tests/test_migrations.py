@@ -300,3 +300,29 @@ def test_upgraded_db_accepts_a_share(tmp_path):
     row = db.conn.execute("SELECT link, part_count FROM shares").fetchone()
     assert row["link"].endswith("#m-1.k") and row["part_count"] == 3
     db.close()
+
+
+def test_an_older_build_still_opens_a_database_this_one_upgraded(tmp_path, monkeypatch):
+    """Installing a newer Gstore must not strand the user on it.
+
+    Someone who tries a new release and goes back to the previous one should
+    find their files where they left them. That holds only while upgrades stay
+    additive — a migration that rewrote or dropped an existing table would
+    break it silently, and the first anyone would hear is a user whose index
+    came back empty.
+    """
+    import gstore.db.database as database_module
+
+    path = tmp_path / "legacy.db"
+    _write_v1_db(path)
+
+    newer = Database(path).open().initialize()
+    before = newer.conn.execute("SELECT COUNT(*) c FROM files").fetchone()["c"]
+    newer.close()
+
+    # The previous release: same database, an older idea of the schema.
+    monkeypatch.setattr(database_module, "SCHEMA_VERSION", SCHEMA_VERSION - 1)
+    older = Database(path).open().initialize()
+
+    assert older.conn.execute("SELECT COUNT(*) c FROM files").fetchone()["c"] == before
+    older.close()
