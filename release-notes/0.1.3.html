@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gstore 0.1.3 Release Notes</title>
+<meta name="description" content="Release notes for Gstore 0.1.3 — fixes opening a shared link for files over about 100 MB, which failed every time in 0.1.2.">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1b1f24; --muted: #5b6672; --rule: #e3e7eb;
+    --accent: #2d4f7c; --code-bg: #f4f6f8;
+    --warn-bg: #fff8e6; --warn-rule: #e0c069; --measure: 46rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#15181c; --fg:#e6e9ec; --muted:#9aa5b1; --rule:#2b3139;
+      --accent:#8fb6e8; --code-bg:#1e232a; --warn-bg:#2a2418; --warn-rule:#6d5a2a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#15181c; --fg:#e6e9ec; --muted:#9aa5b1; --rule:#2b3139;
+    --accent:#8fb6e8; --code-bg:#1e232a; --warn-bg:#2a2418; --warn-rule:#6d5a2a;
+  }
+  body { background:var(--bg); color:var(--fg); margin:0;
+         padding-block:3rem; padding-inline:1rem;
+         font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+              "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing:antialiased; }
+  main { max-width:var(--measure); margin:0 auto; }
+  h1 { font-size:2.1rem; line-height:1.2; margin:0 0 .3rem; letter-spacing:-.02em; }
+  h2 { font-size:1.35rem; margin:2.5rem 0 .75rem; padding-top:1.5rem;
+       border-top:1px solid var(--rule); letter-spacing:-.01em; }
+  a { color:var(--accent); }
+  .sub { color:var(--muted); margin:0 0 2rem; }
+  .lede { font-size:1.1rem; }
+  code, pre { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+              font-size:.875em; }
+  code { background:var(--code-bg); padding:.12em .35em; border-radius:3px; }
+  pre { background:var(--code-bg); padding:.9rem 1rem; border-radius:6px;
+        overflow-x:auto; line-height:1.5; }
+  pre code { background:none; padding:0; }
+  .note { background:var(--warn-bg); border-left:3px solid var(--warn-rule);
+          padding:.85rem 1rem; border-radius:0 5px 5px 0; margin:1.25rem 0; }
+  .note p:first-child { margin-top:0; } .note p:last-child { margin-bottom:0; }
+  .masthead { display:flex; align-items:center; gap:.9rem; margin-bottom:.3rem; }
+  .masthead img { width:56px; height:56px; border-radius:12px; flex:none; }
+  .masthead h1 { margin:0; }
+  @media (max-width:28rem) { .masthead img { width:44px; height:44px; } }
+  footer { margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--rule);
+           color:var(--muted); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+
+<div class="masthead">
+  <img src="../assets/gstore_logo_120.png" alt="" width="120" height="120">
+  <h1>Gstore 0.1.3</h1>
+</div>
+<p class="sub">28 October 2026 &middot; previous release <code>0.1.2</code>, the same day</p>
+
+<p class="lede">
+  A fix for sharing. In 0.1.2, opening a link to a file larger than about
+  100&nbsp;MB failed every time. Everything else is unchanged.
+</p>
+
+<h2>Shared files over 100 MB now open</h2>
+
+<p>
+  Opening a link to a large file reported:
+</p>
+
+<pre><code>Google returned a web page instead of file data —
+the share may have been withdrawn or rate limited</code></pre>
+
+<p>
+  Nothing was withdrawn and nothing was rate limited. Google Drive does not
+  virus-scan files over roughly 100&nbsp;MB, and instead of the file it serves
+  a confirmation page asking whether you want to download it anyway &mdash;
+  as a web page, with a success code. Gstore saw markup where it expected
+  bytes, and said so in the only terms it had.
+</p>
+
+<p>
+  The mistaken assumption was that no shared piece could be that large.
+  Gstore splits a file across accounts <em>only</em> when it fits in no single
+  one of them; a file that fits is stored whole, at whatever size it happens
+  to be. So a 20&nbsp;GB file &mdash; stored as 409 pieces of 50&nbsp;MB
+  &mdash; shared perfectly well, while a single 130&nbsp;MB file did not.
+</p>
+
+<p>
+  Gstore now follows the confirmation the page asks for and downloads the file.
+  A page that carries no such confirmation is still reported as unavailable,
+  because that genuinely is a withdrawn or rate-limited share.
+</p>
+
+<div class="note">
+  <p>
+    <strong>Both ends need 0.1.3.</strong> Sharing was never the broken half
+    &mdash; links created by 0.1.2 are perfectly valid. It is <em>opening</em>
+    one that failed, so whoever receives a link needs this version. Links
+    already sent keep working; the recipient just needs to update.
+  </p>
+</div>
+
+<h2>No Intel macOS download</h2>
+
+<p>
+  The site and README offered a macOS Intel build. No release has ever
+  actually carried one &mdash; the runner that job needs is rarely available
+  &mdash; so that link had always led to a missing file. It has been removed
+  rather than left to disappoint. The macOS build is Apple silicon only.
+</p>
+
+<h2>Upgrading</h2>
+
+<p>
+  Replace the application. Nothing changes in the local index, in linked
+  accounts, or in files already stored or shared.
+</p>
+
+<footer>
+  <p>
+    <a href="https://github.com/Parthivsurya/Gstorage/releases/tag/v0.1.3">Release on GitHub</a>
+    &middot; <a href="https://github.com/Parthivsurya/Gstorage/compare/v0.1.2...v0.1.3">Full diff from 0.1.2</a>
+    &middot; <a href="./">All release notes</a>
+    &middot; <a href="../">Gstore</a>
+  </p>
+</footer>
+
+</main>
+</body>
+</html>
