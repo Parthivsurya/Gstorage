@@ -43,7 +43,11 @@ def test_every_urlopen_in_the_app_passes_a_context():
 
     offenders, checked = [], 0
     for path in sorted(Path(gstore.__file__).parent.rglob("*.py")):
-        tree = ast.parse(path.read_text())
+        # encoding is explicit: Python source is UTF-8 by definition, but
+        # read_text() defaults to the locale encoding, which is cp1252 on a
+        # Windows runner. The em dashes and emoji in the UI modules made this
+        # raise UnicodeDecodeError there and pass everywhere else.
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
