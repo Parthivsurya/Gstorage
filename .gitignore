@@ -45,3 +45,9 @@ ss/
 # output, re-rendered per release from the version in the package, so there is
 # nothing here git needs to carry.
 assets/social/
+
+# The renderers that produce them. Kept in ~/Gstore-private/social-cards/;
+# listed here so copying one back to run it cannot re-commit it by accident.
+packaging/cardkit.py
+packaging/make_poster.py
+packaging/make_release_card.py
