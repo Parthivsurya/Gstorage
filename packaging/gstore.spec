@@ -39,6 +39,16 @@ from gstore import __version__ as VERSION  # noqa: E402
 datas = collect_data_files("gstore", includes=["**/*.sql", "**/*.json"])
 hiddenimports = collect_submodules("gstore")
 
+# certifi, named explicitly rather than left to dependency analysis.
+#
+# gstore.tls imports it inside a function, guarded by try/except ImportError —
+# the shape a bundler is entitled to treat as optional. If its cacert.pem were
+# dropped, every stdlib HTTPS call would fail exactly as it did before the fix,
+# silently, and only in the packaged build. That is the bug being fixed here,
+# so it is not left to inference.
+datas += collect_data_files("certifi")
+hiddenimports += ["certifi", "gstore.tls"]
+
 a = Analysis(
     [os.path.join(SPECPATH, "run_gstore.py")],  # noqa: F821 (SPECPATH is injected)
     pathex=[],
