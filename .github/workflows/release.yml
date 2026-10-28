@@ -158,7 +158,6 @@ jobs:
           | Platform | Download |
           | --- | --- |
           | macOS (Apple Silicon) | [Gstore-macos-arm64.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg) |
-          | macOS (Intel) | [Gstore-macos-intel.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-intel.dmg) |
           | Windows 64-bit | [Gstore-windows-x64.zip](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip) |
           | Linux x86_64 | [Gstore-linux-x64.tar.gz](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-linux-x64.tar.gz) |
 
@@ -170,8 +169,7 @@ jobs:
 
           - **macOS** — the app is blocked on first open. Go to System Settings
             -> Privacy & Security, find the notice about Gstore, and choose
-            "Open Anyway". Apple Silicon and Intel builds are not
-            interchangeable.
+            "Open Anyway". The macOS build is Apple silicon only.
           - **Windows** — SmartScreen shows "Windows protected your PC". Choose
             "More info" -> "Run anyway". Unzip first; run `Gstore.exe` from the
             extracted folder, keeping it next to its files.

@@ -50,15 +50,13 @@ reaches a server of ours.
 
 | Platform | Download |
 | --- | --- |
-| macOS (Apple Silicon) | [Gstore-macos-arm64.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg) |
-| macOS (Intel) | [Gstore-macos-intel.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-intel.dmg) |
+| macOS (Apple silicon) | [Gstore-macos-arm64.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg) |
 | Windows 64-bit | [Gstore-windows-x64.zip](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip) |
 | Linux x86_64 | [Gstore-linux-x64.tar.gz](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-linux-x64.tar.gz) |
 
 Those links always resolve to the newest release. What changed in each version is written up in the
-[release notes](https://gstore.iampkb.dev/release-notes/). The Intel macOS
-build comes from a best-effort CI job and may be missing from a given release;
-the Apple Silicon and Intel builds are not interchangeable.
+[release notes](https://gstore.iampkb.dev/release-notes/). The macOS build is
+Apple silicon only; there is no Intel build at present.
 
 **These builds are not code-signed**, so the OS will warn you on first launch:
 
