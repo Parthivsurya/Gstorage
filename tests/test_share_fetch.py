@@ -39,11 +39,28 @@ class FakeResponse:
         self._pos += len(block)
         return block
 
+    def close(self):
+        pass
+
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         return False
+
+
+# What Drive actually serves for a file too big for it to scan. Reduced from a
+# real capture; the form is the part that matters.
+SCAN_PAGE = (
+    b'<!DOCTYPE html><html><head><title>Google Drive - Virus scan warning'
+    b'</title></head><body><form id="download-form" action="'
+    b'https://drive.usercontent.google.com/download" method="get">'
+    b'<input type="hidden" name="id" value="FILEID">'
+    b'<input type="hidden" name="export" value="download">'
+    b'<input type="hidden" name="confirm" value="t">'
+    b'<input type="hidden" name="uuid" value="abc-123">'
+    b"</form></body></html>"
+)
 
 
 class FakeDrive:
@@ -53,18 +70,30 @@ class FakeDrive:
         self.store: dict[str, bytes] = {}
         self.status_for: dict[str, int] = {}
         self.requested: list[str] = []
+        # ids that answer the first request with the scan page, as a file over
+        # ~100 MB does
+        self.needs_confirm: set[str] = set()
+        self.confirm_urls: list[str] = []
 
     def add(self, file_id: str, payload: bytes) -> Part:
         self.store[file_id] = payload
         return Part(file_id, _md5(payload), len(payload))
 
     def open(self, url: str, *_, **__):
-        file_id = parse_qs(urlsplit(url).query)["id"][0]
-        self.requested.append(file_id)
+        query = parse_qs(urlsplit(url).query)
+        file_id = query["id"][0]
+        confirmed = "confirm" in query
+        if confirmed:
+            self.confirm_urls.append(url)
+        else:
+            self.requested.append(file_id)
+
         if file_id in self.status_for:
             raise urllib.error.HTTPError(url, self.status_for[file_id], "no", {}, None)
         if file_id not in self.store:
             raise urllib.error.HTTPError(url, 404, "not found", {}, None)
+        if file_id in self.needs_confirm and not confirmed:
+            return FakeResponse(SCAN_PAGE.replace(b"FILEID", file_id.encode()))
         return FakeResponse(self.store[file_id])
 
 
@@ -201,3 +230,60 @@ def test_stream_count_defaults_and_clamps(monkeypatch):
 def test_a_nonsense_stream_count_falls_back_instead_of_crashing(monkeypatch):
     monkeypatch.setenv(fetch_mod.STREAMS_ENV, "lots")
     assert fetch_mod.stream_count() == fetch_mod.DEFAULT_STREAMS
+
+
+# -- Drive's virus-scan interstitial ---------------------------------------
+
+
+def test_a_file_too_big_to_scan_is_fetched_through_the_confirm_page(drive, tmp_path):
+    """Over ~100 MB Drive serves a warning page instead of the bytes.
+
+    Chunked pieces are 50 MB and never see it, but a file that fits in one
+    account is stored whole at any size — so this broke sharing a 130 MB file
+    while a 60 MB one worked.
+    """
+    manifest, whole = _manifest(drive, [b"A" * 4096])
+    drive.needs_confirm.add("id-0")
+
+    dest = tmp_path / "out.bin"
+    download_shared(manifest, dest)
+
+    assert dest.read_bytes() == whole
+    assert drive.confirm_urls, "the confirm form was never followed"
+
+
+def test_the_confirm_request_carries_what_the_page_asked_for(drive, tmp_path):
+    manifest, _ = _manifest(drive, [b"A" * 4096])
+    drive.needs_confirm.add("id-0")
+    download_shared(manifest, tmp_path / "out.bin")
+
+    url = drive.confirm_urls[0]
+    assert "confirm=t" in url
+    assert "uuid=abc-123" in url, "the page's uuid must be echoed back"
+    assert "id=id-0" in url
+
+
+def test_the_manifest_is_also_fetched_through_the_confirm_page(drive):
+    # A manifest is only kilobytes so it will not normally hit this, but the
+    # two fetch paths must not diverge.
+    from gstore.share.fetch import fetch_bytes
+
+    drive.add("tiny", b"payload")
+    drive.needs_confirm.add("tiny")
+    assert fetch_bytes("tiny") == b"payload"
+
+
+def test_html_with_no_confirm_form_is_still_reported_as_unavailable(drive, tmp_path):
+    # A withdrawn share returns a page too, but not one that can be stepped past.
+    manifest, _ = _manifest(drive, [b"A" * 1024])
+    drive.store["id-0"] = b"<!DOCTYPE html><html>Sorry, this file is unavailable</html>"
+    with pytest.raises(ShareUnavailable, match="web page"):
+        download_shared(manifest, tmp_path / "out.bin")
+
+
+def test_a_confirm_that_still_returns_a_page_is_not_retried_forever(drive, tmp_path):
+    manifest, _ = _manifest(drive, [b"A" * 1024])
+    drive.needs_confirm.add("id-0")
+    drive.store["id-0"] = SCAN_PAGE.replace(b"FILEID", b"id-0")   # loops back
+    with pytest.raises(ShareUnavailable, match="even after confirming"):
+        download_shared(manifest, tmp_path / "out.bin")

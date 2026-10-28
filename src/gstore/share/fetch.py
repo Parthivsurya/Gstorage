@@ -20,8 +20,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
+from urllib.parse import urlencode
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
@@ -38,10 +40,13 @@ log = logging.getLogger(__name__)
 # app, and one key's quota would then be shared by every Gstore user alive.
 PUBLIC_URL = "https://drive.google.com/uc?export=download&id={file_id}"
 
-# Pieces are 50 MB, well under the ~100 MB where Drive interposes a virus-scan
-# confirmation page instead of the bytes. Worth stating because it is the
-# chunk size that keeps this path simple, not luck.
+# Over roughly 100 MB Drive will not scan a file for viruses and serves a
+# confirmation page instead of the bytes — with a 200, as HTML. Chunked
+# pieces are 50 MB and never see it, but a file small enough to fit in one
+# account is stored WHOLE at any size, so a shared 130 MB file hit this and a
+# shared 60 MB one did not. CONFIRM_URL is what the page's own form posts to.
 READ_SIZE = 1024 * 1024
+CONFIRM_URL = "https://drive.usercontent.google.com/download"
 DEFAULT_STREAMS = 4
 MAX_STREAMS = 16
 STREAMS_ENV = "GSTORE_SHARE_STREAMS"
@@ -74,12 +79,72 @@ def _open(url: str):
     return urllib.request.urlopen(request, timeout=TIMEOUT_SEC, context=ssl_context())
 
 
+def _confirm_url(page: bytes, file_id: str) -> str | None:
+    """Rebuild the request the virus-scan page's own form would send.
+
+    Returns None if this is some other HTML — a withdrawn share, say — so the
+    caller can report that rather than retrying something that will not work.
+    """
+    if b"confirm" not in page:
+        return None
+    fields = dict(re.findall(rb'name="([^"]+)"\s+value="([^"]*)"', page))
+    confirm = fields.get(b"confirm")
+    if not confirm:
+        return None
+    query = {
+        "id": fields.get(b"id", file_id.encode()).decode(),
+        "export": "download",
+        "confirm": confirm.decode(),
+    }
+    uuid = fields.get(b"uuid")
+    if uuid:
+        query["uuid"] = uuid.decode()
+    return f"{CONFIRM_URL}?{urlencode(query)}"
+
+
+def _open_public(file_id: str):
+    """Open a public file, stepping past the scan page if Drive shows one.
+
+    Returns (response, first_block). The first block is handed back because
+    detecting HTML means having already read it, and a caller streaming to
+    disk must not lose it.
+    """
+    url = PUBLIC_URL.format(file_id=file_id)
+    response = _open(url)
+    first = response.read(READ_SIZE)
+    if first[:1] != b"<":
+        return response, first
+
+    # An interstitial is a few KB; whatever is left is the rest of the page.
+    page = first + response.read()
+    response.close()
+
+    confirm = _confirm_url(page, file_id)
+    if confirm is None:
+        raise ShareUnavailable(
+            "Google returned a web page instead of the file \u2014 the share "
+            "may have been withdrawn, or temporarily rate limited"
+        )
+
+    response = _open(confirm)
+    first = response.read(READ_SIZE)
+    if first[:1] == b"<":
+        response.close()
+        raise ShareUnavailable(
+            "Google would not serve this file even after confirming the "
+            "download \u2014 it may be withdrawn or temporarily rate limited"
+        )
+    return response, first
+
+
 def fetch_bytes(file_id: str, *, max_bytes: int | None = None) -> bytes:
     """Download a small public file whole — used for the manifest itself."""
-    url = PUBLIC_URL.format(file_id=file_id)
     try:
-        with _open(url) as response:
-            data = response.read(max_bytes) if max_bytes else response.read()
+        response, first = _open_public(file_id)
+        with response:
+            data = first + response.read()
+        if max_bytes is not None:
+            data = data[:max_bytes]
     except urllib.error.HTTPError as exc:
         if exc.code in (403, 404):
             raise ShareUnavailable(
@@ -89,13 +154,6 @@ def fetch_bytes(file_id: str, *, max_bytes: int | None = None) -> bytes:
         raise ShareUnavailable(f"could not reach the share ({exc.code})") from exc
     except (urllib.error.URLError, OSError) as exc:
         raise ShareUnavailable(f"could not reach Google: {exc}") from exc
-
-    if data[:1] == b"<":
-        # An HTML body with a 200 is how these endpoints report trouble.
-        raise ShareUnavailable(
-            "Google returned a web page instead of the file — the share may "
-            "have been withdrawn, or temporarily rate limited"
-        )
     return data
 
 
@@ -106,29 +164,19 @@ def load_manifest(manifest_id: str, key: bytes) -> Manifest:
 
 def _fetch_part(part: Part, fd: int, offset: int, should_stop) -> int:
     """Stream one piece to `offset`, verifying it; return bytes written."""
-    url = PUBLIC_URL.format(file_id=part.drive_file_id)
     digest = hashlib.md5()
     written = 0
 
     try:
-        with _open(url) as response:
-            first = True
-            while True:
-                if should_stop is not None and should_stop():
-                    return written
-                block = response.read(READ_SIZE)
-                if not block:
-                    break
-                if first:
-                    if block[:1] == b"<":
-                        raise ShareUnavailable(
-                            "Google returned a web page instead of file data — "
-                            "the share may have been withdrawn or rate limited"
-                        )
-                    first = False
+        response, block = _open_public(part.drive_file_id)
+        with response:
+            while block:
                 pwrite(fd, block, offset + written)
                 digest.update(block)
                 written += len(block)
+                if should_stop is not None and should_stop():
+                    return written
+                block = response.read(READ_SIZE)
     except urllib.error.HTTPError as exc:
         raise ShareUnavailable(
             f"a piece of this file is no longer available ({exc.code})"
