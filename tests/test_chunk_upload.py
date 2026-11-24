@@ -70,14 +70,16 @@ class FakeDrive:
         self.delay = 0.0
         self.concurrent = 0
         self.peak = 0
+        self.parents: list[str | None] = []  # the parent each chunk was sent to
 
     def upload_range(self, credentials, name, fd, offset, length,
-                     should_stop=None, on_progress=None):
+                     should_stop=None, on_progress=None, parent_id=None):
         with self._lock:
             self._n += 1
             n = self._n
             self.concurrent += 1
             self.peak = max(self.peak, self.concurrent)
+            self.parents.append(parent_id)
         try:
             return self._do(credentials, name, fd, offset, length, should_stop,
                             on_progress, n)
@@ -627,3 +629,65 @@ def test_stream_count_defaults_and_clamps(monkeypatch):
     assert chunk_upload.stream_count() == 1
     monkeypatch.setenv("GSTORE_UPLOAD_STREAMS", "nope")
     assert chunk_upload.stream_count() == chunk_upload.DEFAULT_STREAMS
+
+
+def test_every_chunk_lands_in_its_own_accounts_folder(drive, tmp_path):
+    """Each account has its own Gstore folder; a chunk must go to the right one."""
+    path, data = _write(tmp_path, 4 * MB)
+    plans = plan_chunk_placement(
+        [_account(1, 2 * MB), _account(2, 2 * MB)], len(data), chunk_size=MB
+    )
+    folders = {1: "folderOne", 2: "folderTwo"}
+
+    results = upload_chunks(
+        path, plans, _creds_for, streams=1, parent_for=folders.get
+    )
+
+    assert len(results) == 4
+    assert set(drive.parents) <= {"folderOne", "folderTwo"}
+    assert len(drive.parents) == 4
+    # Every account used got its own folder, never the other's.
+    by_account = {p.sequence: p.account_id for p in plans}
+    assert all(parent is not None for parent in drive.parents)
+    assert set(by_account.values()) == {1, 2}
+
+
+def test_chunks_still_upload_with_no_folder_resolver_at_all(drive, tmp_path):
+    """Back-compat and the degraded path: parent_for omitted means the root."""
+    path, data = _write(tmp_path, 2 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+
+    results = upload_chunks(path, plans, _creds_for, streams=1)
+
+    assert drive.parents == [None, None]
+    assert b"".join(drive.store[r.drive_file_id] for r in results) == data
+
+
+def test_a_folder_that_could_not_be_resolved_falls_back_to_the_root(drive, tmp_path):
+    """FolderResolver returns None on failure; that must not fail the upload."""
+    path, data = _write(tmp_path, 2 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+
+    results = upload_chunks(
+        path, plans, _creds_for, streams=1, parent_for=lambda _id: None
+    )
+
+    assert drive.parents == [None, None]
+    assert b"".join(drive.store[r.drive_file_id] for r in results) == data
+
+
+def test_the_folder_is_resolved_once_per_account_not_once_per_chunk(drive, tmp_path):
+    """20 GB is ~410 chunks; resolving per chunk would be 410 round trips."""
+    path, data = _write(tmp_path, 8 * MB)
+    plans = plan_chunk_placement([_account(1, 50 * MB)], len(data), chunk_size=MB)
+
+    calls: list[int] = []
+
+    def parent_for(account_id):
+        calls.append(account_id)
+        return "folderOne"
+
+    upload_chunks(path, plans, _creds_for, streams=1, parent_for=parent_for)
+
+    assert len(drive.parents) == 8, "all eight chunks were sent"
+    assert calls == [1], "but the folder was looked up exactly once"

@@ -21,6 +21,7 @@ from gstore.auth.accounts import AccountStore
 from gstore.db import Database
 from gstore.index import IndexStore
 from gstore.index.shares import Shares
+from gstore.drive.folder import FolderResolver
 from gstore.share.publish import Cancelled, NotShareable, share_file, unshare_file
 
 log = get_logger(__name__)
@@ -61,12 +62,14 @@ class ShareWorker(_SharingThread):
 
             accounts = AccountStore(db)
             try:
+                folders = FolderResolver(accounts)
                 result = share_file(
                     index,
                     entry,
                     accounts.get_credentials,
                     should_stop=self.should_stop,
                     on_progress=lambda done, total: self.progress.emit(done, total),
+                    parent_for=folders.folder_id,
                 )
             except Cancelled:
                 # Pieces already made public stay public: the row below is

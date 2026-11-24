@@ -164,6 +164,7 @@ def _upload_range(
     length: int,
     should_stop: Callable[[], bool] | None = None,
     on_progress: Callable[[float], None] | None = None,
+    parent_id: str | None = None,
 ) -> tuple[str, str]:
     """Upload one byte range of `fd` as a Drive file; verify + return (id, md5).
 
@@ -186,8 +187,11 @@ def _upload_range(
         resumable=True,
         chunksize=_UPLOAD_CHUNK_BYTES,
     )
+    body: dict = {"name": name}
+    if parent_id:
+        body["parents"] = [parent_id]
     request = service.files().create(
-        body={"name": name}, media_body=media, fields="id,md5Checksum"
+        body=body, media_body=media, fields="id,md5Checksum"
     )
     response = None
     while response is None:
@@ -219,6 +223,7 @@ def upload_chunks(
     resume: ChunkResume | None = None,
     should_stop: Callable[[], bool] | None = None,
     streams: int | None = None,
+    parent_for: Callable[[int], str | None] | None = None,
 ) -> list[ChunkUploadResult]:
     """Upload the chunks in `assignments`; return all chunk results in order.
 
@@ -234,6 +239,11 @@ def upload_chunks(
     With a `resume` store, stopping is therefore a *pause*: the chunks already
     uploaded stay staged and the next attempt continues from the first one
     missing. It raises :class:`Cancelled`.
+
+    `parent_for` maps an account id to the Drive folder its chunks belong in
+    (see :mod:`gstore.drive.folder`). It is called once per account before any
+    worker starts, never once per chunk — resolving it reads the SQLite index,
+    and 400 chunks must not mean 400 round trips.
     """
     path = Path(local_path)
     ordered = sorted(assignments, key=lambda p: p.sequence)
@@ -250,9 +260,15 @@ def upload_chunks(
     # by SQLite and credentials are read through it, and a connection belongs
     # to the thread that opened it — a worker reaching back raises
     # ProgrammingError.
+    accounts_used = {p.account_id for p in ordered}
     creds: dict[int, Credentials] = {
-        account_id: credentials_for(account_id)
-        for account_id in {p.account_id for p in ordered}
+        account_id: credentials_for(account_id) for account_id in accounts_used
+    }
+    # Same thread story as the credentials above, and the reason this is a dict
+    # rather than a call inside the worker: one lookup per account, not per chunk.
+    parents: dict[int, str | None] = {
+        account_id: (parent_for(account_id) if parent_for is not None else None)
+        for account_id in accounts_used
     }
 
     workers = streams or stream_count()
@@ -308,6 +324,7 @@ def upload_chunks(
                     plan.length,
                     should_stop,
                     track,
+                    parents[plan.account_id],
                 )
                 in_flight[future] = plan
                 return True

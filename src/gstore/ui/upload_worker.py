@@ -25,6 +25,7 @@ from gstore.drive.placement import (
 )
 from gstore.drive.quota import fetch_storage_quota
 from gstore.drive.rate_limit import Cancelled
+from gstore.drive.folder import FolderResolver
 from gstore.drive.upload import upload_file
 from gstore.index import IndexStore
 from gstore.index.pending_chunks import PendingChunks
@@ -105,6 +106,9 @@ class UploadWorker(QThread):
         index = IndexStore(db)
         sessions = UploadSessions(db)
         pending = PendingChunks(db)
+        # Resolved on this thread, which owns the SQLite connection, and cached
+        # for the whole transfer: see gstore.drive.folder.FolderResolver.
+        folders = FolderResolver(accounts)
         try:
             account_list = accounts.list_accounts()
             if not account_list:
@@ -141,12 +145,13 @@ class UploadWorker(QThread):
                 if target is None:
                     # No single account fits — split across several.
                     self._upload_chunked(
-                        accounts, index, pending, fresh, size, mtime_ns, path_key
+                        accounts, index, pending, fresh, size, mtime_ns, path_key,
+                        folders,
                     )
                     return
 
             self._upload_whole(
-                accounts, index, sessions, target, size, mtime_ns, path_key
+                accounts, index, sessions, target, size, mtime_ns, path_key, folders
             )
         except Cancelled:
             # Paused, not failed: the resumable session / staged chunks remain.
@@ -159,7 +164,7 @@ class UploadWorker(QThread):
     # -- whole-file -----------------------------------------------------------
 
     def _upload_whole(
-        self, accounts, index, sessions, target, size, mtime_ns, path_key
+        self, accounts, index, sessions, target, size, mtime_ns, path_key, folders
     ) -> None:
         try:
             credentials = accounts.get_credentials(target.id)
@@ -176,6 +181,7 @@ class UploadWorker(QThread):
             on_progress=self.progress.emit,
             session=session,
             should_stop=self.isInterruptionRequested,
+            parent_id=folders.folder_id(target.id),
         )
         index.create_file(
             self.local_path.name,
@@ -197,7 +203,7 @@ class UploadWorker(QThread):
     # -- chunked --------------------------------------------------------------
 
     def _upload_chunked(
-        self, accounts, index, pending, candidates, size, mtime_ns, path_key
+        self, accounts, index, pending, candidates, size, mtime_ns, path_key, folders
     ) -> None:
         resume = _ChunkResume(pending, path_key, size, mtime_ns)
         completed = resume.completed()
@@ -263,6 +269,7 @@ class UploadWorker(QThread):
                 on_progress=self.progress.emit,
                 resume=resume,
                 should_stop=self.isInterruptionRequested,
+                parent_for=folders.folder_id,
             )
         except RefreshError:
             # Uploaded chunks are staged; the next attempt resumes from them.

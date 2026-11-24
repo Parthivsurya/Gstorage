@@ -67,6 +67,7 @@ def upload_file(
     on_progress: Callable[[float], None] | None = None,
     session: UploadSession | None = None,
     should_stop: Callable[[], bool] | None = None,
+    parent_id: str | None = None,
 ) -> UploadResult:
     """Upload `local_path`, verify its checksum, and return the result.
 
@@ -78,6 +79,12 @@ def upload_file(
     `should_stop` is polled between chunks; because the session URI is already
     persisted, stopping is a pause that the next attempt resumes from. It
     raises :class:`~gstore.drive.rate_limit.Cancelled`.
+
+    `parent_id` is the Drive folder to place the file in (see
+    :mod:`gstore.drive.folder`); None uploads to the account's root, which is
+    what every release before this one did. Note that a *resumed* upload lands
+    wherever its original session put it — the parent is fixed when the
+    session is created, not when it finishes.
     """
     path = Path(local_path)
     local_md5 = md5_of_file(path)
@@ -85,8 +92,11 @@ def upload_file(
 
     def _new_request():
         media = MediaFileUpload(str(path), resumable=True, chunksize=_CHUNK_BYTES)
+        body: dict = {"name": path.name}
+        if parent_id:
+            body["parents"] = [parent_id]
         return service.files().create(
-            body={"name": path.name}, media_body=media, fields="id,size,md5Checksum"
+            body=body, media_body=media, fields="id,size,md5Checksum"
         )
 
     request = _new_request()

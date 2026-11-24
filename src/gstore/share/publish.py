@@ -166,7 +166,9 @@ def _parts_of(index, file_row) -> tuple[Part, ...]:
     )
 
 
-def upload_manifest(credentials: Credentials, sealed: bytes) -> str:
+def upload_manifest(
+    credentials: Credentials, sealed: bytes, parent_id: str | None = None
+) -> str:
     """Put the sealed manifest on Drive and return its id.
 
     Deliberately anonymous: a fixed filename and an opaque mime type, so the
@@ -177,11 +179,10 @@ def upload_manifest(credentials: Credentials, sealed: bytes) -> str:
     media = MediaIoBaseUpload(
         io.BytesIO(sealed), mimetype=MANIFEST_MIME, resumable=False
     )
-    request = service.files().create(
-        body={"name": MANIFEST_NAME, "mimeType": MANIFEST_MIME},
-        media_body=media,
-        fields="id",
-    )
+    body: dict = {"name": MANIFEST_NAME, "mimeType": MANIFEST_MIME}
+    if parent_id:
+        body["parents"] = [parent_id]
+    request = service.files().create(body=body, media_body=media, fields="id")
     created = execute_with_backoff(request.execute)
     return created["id"]
 
@@ -193,8 +194,15 @@ def share_file(
     *,
     should_stop: Callable[[], bool] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    parent_for: Callable[[int], str | None] | None = None,
 ) -> ShareResult:
-    """Make a stored file readable by anyone with the returned link."""
+    """Make a stored file readable by anyone with the returned link.
+
+    `parent_for` maps an account id to the Drive folder the manifest should sit
+    in, so sharing does not drop a stray file in the user's root (see
+    :mod:`gstore.drive.folder`). The pieces are already wherever they were
+    uploaded; only the manifest is created here.
+    """
     pieces = _pieces_of(index, file_row)
     parts = _parts_of(index, file_row)
 
@@ -219,7 +227,11 @@ def share_file(
     # certain is linked and healthy, since we just wrote to it.
     manifest_account_id = pieces[0][0]
     credentials = credentials_for(manifest_account_id)
-    manifest_id = upload_manifest(credentials, manifest.seal(key))
+    manifest_id = upload_manifest(
+        credentials,
+        manifest.seal(key),
+        parent_for(manifest_account_id) if parent_for is not None else None,
+    )
     grant_public(credentials, manifest_id)
 
     log.info("shared %r; manifest %s", file_row.name, manifest_id)
