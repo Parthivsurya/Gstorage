@@ -51,6 +51,8 @@ from gstore.ui.share_dialog import (
 from gstore.ui.share_download_worker import ResolveShareWorker, ShareDownloadWorker
 from gstore.ui.share_worker import ShareWorker, UnshareWorker
 from gstore.ui.thumbnail_worker import ThumbnailWorker
+from gstore.ui.folder_download_worker import FolderDownloadWorker
+from gstore.ui.folder_upload_worker import FolderUploadWorker
 from gstore.ui.upload_worker import UploadWorker
 
 # Trailing window for the speed estimate. Long enough to smooth out
@@ -93,6 +95,7 @@ class FileBrowser(QWidget):
         self._scan: ScanResult | None = None
         self._visible_rows: list[ScanRow] = []  # rows shown after search filter
         self._upload_worker: UploadWorker | None = None
+        self._folder_upload_failures: list[str] = []
         self._transfer_message = ""
         self._transfer_total: int | None = None
         # Recent (monotonic time, fraction) samples, for a *current* speed
@@ -143,6 +146,12 @@ class FileBrowser(QWidget):
 
         self.upload_button = QPushButton("Upload file")
         self.upload_button.clicked.connect(self._on_upload)
+        self.upload_folder_button = QPushButton("Upload folder")
+        self.upload_folder_button.setToolTip(
+            "Upload every file in a folder, keeping its structure. Hidden "
+            "files and symlinks are skipped; files already here are left alone."
+        )
+        self.upload_folder_button.clicked.connect(self._on_upload_folder)
         self.download_button = QPushButton("Download")
         self.download_button.clicked.connect(self._on_download)
         self.new_folder_button = QPushButton("New folder")
@@ -172,6 +181,7 @@ class FileBrowser(QWidget):
         buttons = QHBoxLayout()
         for button in (
             self.upload_button,
+            self.upload_folder_button,
             self.download_button,
             self.new_folder_button,
             self.rename_button,
@@ -656,10 +666,17 @@ class FileBrowser(QWidget):
         if is_file:
             entry = self.index.get_file(selection[1])
             downloadable = entry is not None and entry.is_available
+        elif selection is not None:
+            # A folder is downloadable when anything inside it can be fetched;
+            # the files that cannot are reported and skipped.
+            downloadable = any(
+                f.is_available for f in self.index.descendant_files(selection[1])
+            )
 
         # Upload / new-folder target the current folder, which is ambiguous while
         # searching (results span folders); disable them until search is cleared.
         self.upload_button.setEnabled(not busy and not self._searching)
+        self.upload_folder_button.setEnabled(not busy and not self._searching)
         self.new_folder_button.setEnabled(not busy and not self._searching)
         self.download_button.setEnabled(downloadable and not busy)
 
@@ -778,6 +795,67 @@ class FileBrowser(QWidget):
         self.cancel_button.setVisible(True)
         worker.start()
 
+    def _on_upload_folder(self) -> None:
+        if self._busy():
+            return
+        path = QFileDialog.getExistingDirectory(self, "Choose a folder to upload")
+        if not path:
+            return
+        # Per-file bytes drive the bar; the overall label says which file of
+        # how many, because one bar cannot honestly show both.
+        self._begin_transfer("Reading the folder…", determinate=True)
+
+        worker = FolderUploadWorker(path, self.current_parent_id, self)
+        worker.progress.connect(self._on_transfer_progress)
+        worker.status.connect(self._set_transfer_message)
+        worker.overall.connect(self._on_folder_upload_overall)
+        worker.file_failed.connect(self._on_folder_upload_file_failed)
+        worker.finished_summary.connect(self._on_folder_upload_summary)
+        worker.failed.connect(self._on_upload_failed)
+        worker.cancelled.connect(self._on_upload_cancelled)
+        worker.finished.connect(self._on_upload_finished)
+        self._upload_worker = worker
+        self._folder_upload_failures = []
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setVisible(True)
+        worker.start()
+
+    def _on_folder_transfer_overall(self, done: int, total: int) -> None:
+        """A fresh file restarts the per-file bar (shared by both directions)."""
+        self.transfer_bar.setValue(0)
+
+    def _on_folder_transfer_file_failed(self, name: str, message: str) -> None:
+        self._folder_upload_failures.append(f"{name}: {message}")
+
+    def _on_folder_upload_overall(self, done: int, total: int) -> None:
+        # A fresh file restarts the per-file bar, so the previous file's 100%
+        # does not sit there looking stalled.
+        self.transfer_bar.setValue(0)
+        self.refresh()
+
+    def _on_folder_upload_file_failed(self, name: str, message: str) -> None:
+        self._folder_upload_failures.append(f"{name}: {message}")
+
+    def _on_folder_upload_summary(
+        self, uploaded: int, skipped: int, failed: int
+    ) -> None:
+        parts = [f"Uploaded {uploaded} file(s)"]
+        if skipped:
+            parts.append(f"{skipped} already here")
+        if failed:
+            parts.append(f"{failed} failed")
+        self.transfer_status.setText(" · ".join(parts) + ".")
+        self.refresh()
+        self.changed.emit()
+        if self._folder_upload_failures:
+            QMessageBox.warning(
+                self,
+                "Some files were not uploaded",
+                "The rest of the folder went up.\n\n"
+                + "\n".join(self._folder_upload_failures[:10])
+                + ("\n…" if len(self._folder_upload_failures) > 10 else ""),
+            )
+
     def _set_transfer_total(self, total: int) -> None:
         """Learn the size mid-flight, when only the worker knows it."""
         self._transfer_total = total or None
@@ -871,7 +949,10 @@ class FileBrowser(QWidget):
             self._download_scan_row()
             return
         selection = self._selected()
-        if selection is None or selection[0] != _FILE:
+        if selection is None:
+            return
+        if selection[0] != _FILE:
+            self._download_folder(selection[1])
             return
         entry = self.index.get_file(selection[1])
         if entry is None:
@@ -912,6 +993,74 @@ class FileBrowser(QWidget):
         worker.finished.connect(self._on_drive_download_finished)
         self._drive_download_worker = worker
         worker.start()
+
+    def _download_folder(self, folder_id: int) -> None:
+        folder = self.index.get_folder(folder_id)
+        if folder is None:
+            return
+        files = self.index.descendant_files(folder_id)
+        if not files:
+            QMessageBox.information(
+                self, "Nothing to download", f"{folder.name} has no files in it."
+            )
+            return
+        total = sum(f.size_bytes for f in files)
+        unavailable = [f for f in files if not f.is_available]
+        question = (
+            f"Download {len(files)} file(s) from {folder.name}, "
+            f"{human_bytes(total)} in all?"
+        )
+        if unavailable:
+            question += (
+                f"\n\n{len(unavailable)} of them cannot be fetched right now "
+                "because an account holding them is not linked. The rest will "
+                "still download."
+            )
+        if QMessageBox.question(
+            self, "Download folder", question,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+
+        dest_root = QFileDialog.getExistingDirectory(self, "Save the folder into")
+        if not dest_root:
+            return
+        self._begin_transfer("Downloading folder…", determinate=True)
+
+        worker = FolderDownloadWorker(folder_id, dest_root, folder.name, self)
+        worker.progress.connect(self._on_transfer_progress)
+        worker.status.connect(self._set_transfer_message)
+        worker.total_bytes.connect(self._set_transfer_total)
+        worker.overall.connect(self._on_folder_transfer_overall)
+        worker.file_failed.connect(self._on_folder_transfer_file_failed)
+        worker.finished_summary.connect(self._on_folder_download_summary)
+        worker.failed.connect(self._on_download_failed)
+        worker.cancelled.connect(self._on_download_cancelled)
+        worker.finished.connect(self._on_download_finished)
+        self._download_worker = worker
+        self._folder_upload_failures = []
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setVisible(True)
+        worker.start()
+
+    def _on_folder_download_summary(
+        self, downloaded: int, skipped: int, failed: int
+    ) -> None:
+        parts = [f"Downloaded {downloaded} file(s)"]
+        if skipped:
+            parts.append(f"{skipped} already on disk")
+        if failed:
+            parts.append(f"{failed} failed")
+        self.transfer_status.setText(" · ".join(parts) + ".")
+        if self._folder_upload_failures:
+            QMessageBox.warning(
+                self,
+                "Some files were not downloaded",
+                "The rest of the folder came down.\n\n"
+                + "\n".join(self._folder_upload_failures[:10])
+                + ("\n…" if len(self._folder_upload_failures) > 10 else ""),
+            )
 
     def _on_download_succeeded(self, dest: str) -> None:
         self.transfer_status.setText(f"Saved to {dest}")
