@@ -79,6 +79,10 @@ class FolderDownloadWorker(DownloadWorker):
         self.folder_id = folder_id
         self.dest_root = Path(dest_root)
         self.folder_name = folder_name
+        # Across the whole folder, not per file: see the upload worker.
+        self._batch_bytes = 0
+        self._bytes_done = 0
+        self._current_size = 0
 
     def run(self) -> None:
         db = Database().open()
@@ -93,6 +97,10 @@ class FolderDownloadWorker(DownloadWorker):
 
             root = self.dest_root / safe_name(self.folder_name)
             total = len(entries)
+            self._batch_bytes = sum(e.size_bytes for e in entries)
+            self._bytes_done = 0
+            self.total_bytes.emit(self._batch_bytes)
+            self.progress.emit(0.0)
 
             for number, entry in enumerate(entries, start=1):
                 if self.isInterruptionRequested():
@@ -106,8 +114,11 @@ class FolderDownloadWorker(DownloadWorker):
                 self.overall.emit(number, total)
                 self.status.emit(f"{entry.name}  ({number} of {total})")
 
+                self._current_size = entry.size_bytes
                 if self._already_downloaded(destination, entry.size_bytes):
                     skipped += 1
+                    self._bytes_done += entry.size_bytes
+                    self._report()
                     continue
 
                 if not entry.is_available:
@@ -115,6 +126,10 @@ class FolderDownloadWorker(DownloadWorker):
                     self.file_failed.emit(
                         entry.name, "its account is not linked right now"
                     )
+                    # Still credit its bytes, or the bar stalls for every
+                    # file that was never going to be fetched.
+                    self._bytes_done += entry.size_bytes
+                    self._report()
                     continue
 
                 try:
@@ -134,6 +149,9 @@ class FolderDownloadWorker(DownloadWorker):
                     failed += 1
                     log.exception("folder download: %s failed", entry.name)
                     self.file_failed.emit(entry.name, f"{type(exc).__name__}: {exc}")
+                self._bytes_done += entry.size_bytes
+                self._current_size = 0
+                self._report()
 
             self.finished_summary.emit(downloaded, skipped, failed)
         except Cancelled:
@@ -142,6 +160,17 @@ class FolderDownloadWorker(DownloadWorker):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
         finally:
             db.close()
+
+    def _report(self) -> None:
+        if self._batch_bytes:
+            self.progress.emit(min(self._bytes_done / self._batch_bytes, 1.0))
+
+    def _emit_progress(self, fraction: float) -> None:
+        """One file's own progress, placed inside the folder's total."""
+        if not self._batch_bytes:
+            return
+        done = self._bytes_done + fraction * self._current_size
+        self.progress.emit(min(done / self._batch_bytes, 1.0))
 
     @staticmethod
     def _already_downloaded(destination: Path, size_bytes: int) -> bool:

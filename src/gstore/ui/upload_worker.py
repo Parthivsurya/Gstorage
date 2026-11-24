@@ -100,6 +100,15 @@ class UploadWorker(QThread):
         self.local_path = Path(local_path)
         self.parent_id = parent_id
 
+    def _emit_progress(self, fraction: float) -> None:
+        """One file's 0.0-1.0 completion.
+
+        A hook rather than a direct emit so FolderUploadWorker can scale it
+        into the whole batch: during a folder upload a single file reaching
+        100% is not the transfer reaching 100%.
+        """
+        self.progress.emit(fraction)
+
     def run(self) -> None:
         db = Database().open()
         accounts = AccountStore(db)
@@ -201,7 +210,7 @@ class UploadWorker(QThread):
         result = upload_file(
             credentials,
             self.local_path,
-            on_progress=self.progress.emit,
+            on_progress=self._emit_progress,
             session=session,
             should_stop=self.isInterruptionRequested,
             parent_id=folders.folder_id(target.id),
@@ -263,7 +272,7 @@ class UploadWorker(QThread):
             self.status.emit("Checksumming…")
             whole_md5 = md5_of_file(
                 self.local_path,
-                on_progress=self.progress.emit,
+                on_progress=self._emit_progress,
                 should_stop=self.isInterruptionRequested,
             )
         resume.file_md5 = whole_md5
@@ -289,7 +298,7 @@ class UploadWorker(QThread):
                 self.local_path,
                 assignments,
                 credentials_for,
-                on_progress=self.progress.emit,
+                on_progress=self._emit_progress,
                 resume=resume,
                 should_stop=self.isInterruptionRequested,
                 parent_for=folders.folder_id,

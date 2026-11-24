@@ -38,6 +38,10 @@ class DownloadWorker(QThread):
         self.file_id = file_id
         self.dest_path = dest_path
 
+    def _emit_progress(self, fraction: float) -> None:
+        """One file's 0.0-1.0 completion; see UploadWorker._emit_progress."""
+        self.progress.emit(fraction)
+
     def run(self) -> None:
         db = Database().open()
         accounts = AccountStore(db)
@@ -90,7 +94,7 @@ class DownloadWorker(QThread):
             credentials,
             entry.drive_file_id,
             self.dest_path,
-            on_progress=self.progress.emit,
+            on_progress=self._emit_progress,
             expected_md5=entry.md5,
         )
         return None
@@ -124,7 +128,7 @@ class DownloadWorker(QThread):
                 credentials_for,
                 self.dest_path,
                 expected_md5=entry.md5 if entry else None,
-                on_progress=self.progress.emit,
+                on_progress=self._emit_progress,
                 on_chunk=announce,
                 should_stop=self.isInterruptionRequested,
                 progress_store=DownloadProgress(db),

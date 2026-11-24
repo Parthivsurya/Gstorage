@@ -341,3 +341,121 @@ def test_each_file_goes_to_its_planned_accounts_folder(linked, worker, monkeypat
     )
 
     assert all(v.startswith("gstore-folder-") for v in seen.values()), seen
+
+
+# -- progress across the batch, not per file ---------------------------------
+
+
+def _progress_of(worker) -> list[float]:
+    seen: list[float] = []
+    worker.progress.connect(seen.append)
+    return seen
+
+
+def test_progress_counts_bytes_across_the_whole_batch(linked, worker, monkeypatch):
+    """The 0.0% bug: the bar showed one file, so it never left zero."""
+    index = linked
+    monkeypatch.setattr(fuw, "upload_file", lambda *a, **k: _Result("x"))
+    root = index.create_folder("folder", None)
+    files = [
+        PlannedFile(path=_Path(f"/tmp/f{i}.txt"), rel_dir=(), size_bytes=100)
+        for i in range(4)
+    ]
+    worker._batch_bytes = 400
+    worker._bytes_done = 0
+    seen = _progress_of(worker)
+
+    worker._upload_in_parallel(
+        files, {(): root}, _Accounts(), index, _Folders(), [_acct(1, 50)], 4
+    )
+
+    assert seen, "no progress was reported at all"
+    assert max(seen) == pytest.approx(1.0), "the batch never reached 100%"
+    assert sorted(seen) == seen, "progress went backwards"
+
+
+def test_progress_is_weighted_by_size_not_file_count(linked, worker, monkeypatch):
+    """20 KB and 2 MB are both 'one file'; only bytes predict time left."""
+    index = linked
+    done_order: list[str] = []
+
+    def fake_upload(creds, path, parent_id=None, **kw):
+        done_order.append(_Path(path).name)
+        return _Result("x")
+
+    monkeypatch.setattr(fuw, "upload_file", fake_upload)
+    root = index.create_folder("folder", None)
+    files = [
+        PlannedFile(path=_Path("/tmp/small.txt"), rel_dir=(), size_bytes=10),
+        PlannedFile(path=_Path("/tmp/big.txt"), rel_dir=(), size_bytes=990),
+    ]
+    worker._batch_bytes = 1000
+    worker._bytes_done = 0
+    seen = _progress_of(worker)
+
+    worker._upload_in_parallel(
+        files, {(): root}, _Accounts(), index, _Folders(), [_acct(1, 50)], 2
+    )
+
+    assert max(seen) == pytest.approx(1.0)
+    # Finishing only the small file must not read as half done.
+    assert any(v == pytest.approx(0.01) or v == pytest.approx(0.99) for v in seen)
+
+
+def test_a_failed_file_still_advances_the_bar(linked, worker, monkeypatch):
+    """Otherwise the reading sticks for every file that cannot go up."""
+    index = linked
+
+    def fake_upload(creds, path, parent_id=None, **kw):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(fuw, "upload_file", fake_upload)
+    root = index.create_folder("folder", None)
+    files = [
+        PlannedFile(path=_Path(f"/tmp/f{i}.txt"), rel_dir=(), size_bytes=50)
+        for i in range(2)
+    ]
+    worker._batch_bytes = 100
+    worker._bytes_done = 0
+    seen = _progress_of(worker)
+
+    uploaded, failed = worker._upload_in_parallel(
+        files, {(): root}, _Accounts(), index, _Folders(), [_acct(1, 50)], 2
+    )
+
+    assert (uploaded, failed) == (0, 2)
+    assert max(seen) == pytest.approx(1.0)
+
+
+def test_a_large_files_own_progress_is_scaled_into_the_batch(worker):
+    """A 4 MB file hitting 100% is not the folder hitting 100%."""
+    worker._batch_bytes = 1000
+    worker._bytes_done = 500   # half the batch already landed
+    worker._current_size = 500  # this file is the other half
+    seen = _progress_of(worker)
+
+    worker._emit_progress(0.0)
+    worker._emit_progress(0.5)
+    worker._emit_progress(1.0)
+
+    assert seen == [pytest.approx(0.5), pytest.approx(0.75), pytest.approx(1.0)]
+
+
+def test_progress_never_exceeds_one(worker):
+    worker._batch_bytes = 100
+    worker._bytes_done = 100
+    worker._current_size = 100
+    seen = _progress_of(worker)
+
+    worker._emit_progress(1.0)
+
+    assert seen == [pytest.approx(1.0)]
+
+
+def test_no_progress_is_reported_when_the_batch_is_empty(worker):
+    worker._batch_bytes = 0
+    seen = _progress_of(worker)
+
+    worker._emit_progress(0.5)
+
+    assert seen == [], "dividing by an empty batch must not be attempted"

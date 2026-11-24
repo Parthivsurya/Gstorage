@@ -97,6 +97,7 @@ class FileBrowser(QWidget):
         self._visible_rows: list[ScanRow] = []  # rows shown after search filter
         self._upload_worker: UploadWorker | None = None
         self._folder_upload_failures: list[str] = []
+        self._folder_position: tuple[int, int] | None = None
         self._transfer_message = ""
         self._transfer_total: int | None = None
         # Recent (monotonic time, fraction) samples, for a *current* speed
@@ -835,6 +836,7 @@ class FileBrowser(QWidget):
             return
         # Per-file bytes drive the bar; the overall label says which file of
         # how many, because one bar cannot honestly show both.
+        self._folder_position = None
         self._begin_transfer("Reading the folder…", determinate=True)
 
         worker = FolderUploadWorker(path, self.current_parent_id, self, plan=plan)
@@ -853,8 +855,13 @@ class FileBrowser(QWidget):
         worker.start()
 
     def _on_folder_transfer_overall(self, done: int, total: int) -> None:
-        """A fresh file restarts the per-file bar (shared by both directions)."""
-        self.transfer_bar.setValue(0)
+        """Which file of how many. The bar itself tracks bytes, not files.
+
+        It used to be reset to zero here, on the assumption the bar showed
+        one file at a time. It shows the whole batch, so resetting it just
+        held the reading at 0.0% for the length of the transfer.
+        """
+        self._folder_position = (done, total)
 
     def _on_folder_transfer_file_failed(self, name: str, message: str) -> None:
         self._folder_upload_failures.append(f"{name}: {message}")
@@ -1058,6 +1065,7 @@ class FileBrowser(QWidget):
         dest_root = QFileDialog.getExistingDirectory(self, "Save the folder into")
         if not dest_root:
             return
+        self._folder_position = None
         self._begin_transfer("Downloading folder…", determinate=True)
 
         worker = FolderDownloadWorker(folder_id, dest_root, folder.name, self)

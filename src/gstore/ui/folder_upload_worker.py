@@ -97,6 +97,11 @@ class FolderUploadWorker(UploadWorker):
         self.plan = plan
         self._done = 0
         self._stopped = False
+        # Progress is reported across the whole batch, not per file: one file
+        # of 282 reaching 100% is not the upload reaching 100%.
+        self._batch_bytes = 0
+        self._bytes_done = 0
+        self._current_size = 0
 
     def run(self) -> None:
         db = Database().open()
@@ -178,6 +183,13 @@ class FolderUploadWorker(UploadWorker):
             large = [p for p in todo if p.size_bytes > SIMPLE_MAX_BYTES]
             total = len(todo)
             self._done = 0
+            # Bytes, not file count: these files run from 20 KB to 2 MB, so
+            # "45 of 282" and "16% of the bytes" are different numbers and
+            # only the second predicts how long is left.
+            self._batch_bytes = sum(p.size_bytes for p in todo)
+            self._bytes_done = 0
+            self.total_bytes.emit(self._batch_bytes)
+            self.progress.emit(0.0)
 
             up, fail = self._upload_in_parallel(
                 small, folder_ids, accounts, index, folders, fresh, total
@@ -199,6 +211,7 @@ class FolderUploadWorker(UploadWorker):
                 )
                 self.local_path = planned.path
                 self.parent_id = folder_ids[planned.rel_dir]
+                self._current_size = planned.size_bytes
                 try:
                     self._upload_one(
                         accounts, index, sessions, pending, folders,
@@ -211,6 +224,9 @@ class FolderUploadWorker(UploadWorker):
                 except Exception as exc:  # noqa: BLE001 -- counted, not fatal
                     failed += 1
                     self.file_failed.emit(planned.path.name, str(exc))
+                self._bytes_done += planned.size_bytes
+                self._current_size = 0
+                self._report()
 
             self.finished_summary.emit(uploaded, skipped, failed)
         except Cancelled:
@@ -219,6 +235,18 @@ class FolderUploadWorker(UploadWorker):
             self.failed.emit(str(exc))
         finally:
             db.close()
+
+    def _report(self) -> None:
+        """Push the batch's completion, counting bytes rather than files."""
+        if self._batch_bytes:
+            self.progress.emit(min(self._bytes_done / self._batch_bytes, 1.0))
+
+    def _emit_progress(self, fraction: float) -> None:
+        """A large file's own progress, placed inside the batch's total."""
+        if not self._batch_bytes:
+            return
+        done = self._bytes_done + fraction * self._current_size
+        self.progress.emit(min(done / self._batch_bytes, 1.0))
 
     def _upload_in_parallel(
         self, planned_files, folder_ids, accounts, index, folders,
@@ -288,7 +316,9 @@ class FolderUploadWorker(UploadWorker):
                     failed += 1
                     name = planned_files[futures[future]].path.name
                     self.file_failed.emit(name, f"{type(exc).__name__}: {exc}")
+                    self._bytes_done += planned_files[futures[future]].size_bytes
                     self.overall.emit(self._done, total)
+                    self._report()
                     continue
 
                 index.create_file(
@@ -300,8 +330,10 @@ class FolderUploadWorker(UploadWorker):
                     md5=result.md5,
                 )
                 uploaded += 1
+                self._bytes_done += planned.size_bytes
                 self.overall.emit(self._done, total)
                 self.status.emit(
                     f"{planned.path.name}  ({self._done} of {total})"
                 )
+                self._report()
         return uploaded, failed
