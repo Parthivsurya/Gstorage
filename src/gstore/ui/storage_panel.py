@@ -34,6 +34,7 @@ from gstore.ui.account_row import AccountRow
 from gstore.ui.login_worker import LoginWorker
 from gstore.ui.quota_worker import QuotaWorker
 from gstore.ui.reconcile_worker import ReconcileWorker
+from gstore.ui.tidy_worker import TidyWorker
 
 
 class StoragePanel(QWidget):
@@ -50,6 +51,7 @@ class StoragePanel(QWidget):
         self._login_worker: LoginWorker | None = None
         self._quota_worker: QuotaWorker | None = None
         self._reconcile_worker: ReconcileWorker | None = None
+        self._tidy_worker: TidyWorker | None = None
         self._quota_errors: list[str] = []
 
         self._build_summary()
@@ -124,6 +126,14 @@ class StoragePanel(QWidget):
         )
         self.repair_button.clicked.connect(self._start_reconcile)
 
+        self.tidy_button = QPushButton("Tidy up my Drive")
+        self.tidy_button.setToolTip(
+            "Move files Gstore uploaded before it had its own folder into the "
+            "Gstore folder on each account. Metadata only — nothing is "
+            "re-uploaded and share links keep working."
+        )
+        self.tidy_button.clicked.connect(self._start_tidy)
+
         self.backup_button = QPushButton("Back up index…")
         self.backup_button.setToolTip(
             "Save a snapshot of the local index — the only map of which account "
@@ -142,6 +152,7 @@ class StoragePanel(QWidget):
         self.button_row.addWidget(self.remove_button)
         self.button_row.addWidget(self.refresh_button)
         self.button_row.addWidget(self.repair_button)
+        self.button_row.addWidget(self.tidy_button)
         self.button_row.addWidget(self.backup_button)
         self.button_row.addWidget(self.restore_button)
         self.button_row.addStretch()
@@ -286,6 +297,49 @@ class StoragePanel(QWidget):
     def _on_reconcile_finished(self) -> None:
         self._reconcile_worker = None
         self.repair_button.setEnabled(True)
+
+    # -- tidy up --------------------------------------------------------------
+
+    def _start_tidy(self) -> None:
+        if self._tidy_worker is not None:
+            return
+        if self.accounts.count() == 0:
+            self.status.setText("Link an account before tidying.")
+            return
+        self.tidy_button.setEnabled(False)
+        self.status.setText("Tidying up…")
+
+        worker = TidyWorker(self)
+        worker.finished_summary.connect(self._on_tidy_summary)
+        worker.account_failed.connect(self._on_tidy_account_failed)
+        worker.progress.connect(self._on_tidy_progress)
+        worker.cancelled.connect(self._on_tidy_cancelled)
+        worker.finished.connect(self._on_tidy_finished)
+        self._tidy_worker = worker
+        worker.start()
+
+    def _on_tidy_progress(self, email: str, done: int, total: int) -> None:
+        self.status.setText(f"Tidying {email}: {done} of {total}…")
+
+    def _on_tidy_summary(self, tidied: int, moved: int, failed: int) -> None:
+        if moved == 0 and failed == 0:
+            self.status.setText("Nothing to tidy — every file is already in place.")
+        else:
+            summary = f"Moved {moved} file(s) into the Gstore folder"
+            summary += f" on {tidied} account(s)." if tidied != 1 else "."
+            if failed:
+                summary += f" {failed} could not be moved."
+            self.status.setText(summary)
+
+    def _on_tidy_account_failed(self, email: str, message: str) -> None:
+        self._quota_errors.append(f"{email}: {message}")
+
+    def _on_tidy_cancelled(self) -> None:
+        self.status.setText("Tidy-up stopped. Files already moved stay moved.")
+
+    def _on_tidy_finished(self) -> None:
+        self._tidy_worker = None
+        self.tidy_button.setEnabled(True)
 
     # -- add account ----------------------------------------------------------
 
