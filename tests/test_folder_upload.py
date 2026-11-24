@@ -459,3 +459,97 @@ def test_no_progress_is_reported_when_the_batch_is_empty(worker):
     worker._emit_progress(0.5)
 
     assert seen == [], "dividing by an empty batch must not be attempted"
+
+
+# -- cancelling must not strand files on Drive -------------------------------
+
+
+def test_cancelling_records_the_files_already_in_the_air(
+    linked, worker, monkeypatch
+):
+    """A file that reached Drive without an index row is an orphan.
+
+    The next run would upload a second copy and only Repair / re-sync would
+    ever find the first, so stopping must drain what is already in flight.
+    """
+    import time
+
+    index = linked
+    sent: list[str] = []
+    lock = threading.Lock()
+
+    def fake_upload(creds, path, parent_id=None, **kw):
+        time.sleep(0.05)          # still in the air when the stop lands
+        with lock:
+            sent.append(_Path(path).name)
+        return _Result(f"drive-{_Path(path).name}")
+
+    monkeypatch.setattr(fuw, "upload_file", fake_upload)
+
+    # Stop as soon as the first result is handled.
+    calls = {"n": 0}
+
+    def interrupted():
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    monkeypatch.setattr(worker, "isInterruptionRequested", interrupted)
+    root = index.create_folder("folder", None)
+    worker._batch_bytes = 16 * 10
+    worker._bytes_done = 0
+
+    uploaded, failed = worker._upload_in_parallel(
+        _planned(16), {(): root}, _Accounts(), index, _Folders(),
+        [_acct(1, 50)], 16,
+    )
+
+    recorded = {e.name for e in index.list_files(root)}
+    assert worker._stopped is True, "the run should have stopped"
+    assert set(sent) <= recorded, (
+        f"uploaded to Drive but missing from the index: {set(sent) - recorded}"
+    )
+    assert uploaded == len(recorded)
+
+
+def test_nothing_is_recorded_twice_when_stopping(linked, worker, monkeypatch):
+    """The drain must skip futures the normal loop already handled."""
+    index = linked
+    monkeypatch.setattr(fuw, "upload_file", lambda *a, **k: _Result("x"))
+
+    calls = {"n": 0}
+
+    def interrupted():
+        calls["n"] += 1
+        return calls["n"] > 3
+
+    monkeypatch.setattr(worker, "isInterruptionRequested", interrupted)
+    root = index.create_folder("folder", None)
+    worker._batch_bytes = 80
+    worker._bytes_done = 0
+
+    uploaded, _ = worker._upload_in_parallel(
+        _planned(8), {(): root}, _Accounts(), index, _Folders(),
+        [_acct(1, 50)], 8,
+    )
+
+    names = [e.name for e in index.list_files(root)]
+    assert len(names) == len(set(names)), f"duplicate index rows: {names}"
+    assert uploaded == len(names)
+
+
+def test_a_clean_run_is_unaffected_by_the_drain(linked, worker, monkeypatch):
+    """No interruption: every file goes through the normal path exactly once."""
+    index = linked
+    monkeypatch.setattr(fuw, "upload_file", lambda *a, **k: _Result("x"))
+    root = index.create_folder("folder", None)
+    worker._batch_bytes = 100
+    worker._bytes_done = 0
+
+    uploaded, failed = worker._upload_in_parallel(
+        _planned(10), {(): root}, _Accounts(), index, _Folders(),
+        [_acct(1, 50)], 10,
+    )
+
+    assert (uploaded, failed) == (10, 0)
+    assert worker._stopped is False
+    assert len(index.list_files(root)) == 10

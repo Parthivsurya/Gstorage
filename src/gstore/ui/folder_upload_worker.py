@@ -24,7 +24,7 @@ Three behaviours worth knowing:
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ALL_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
 
 from PySide6.QtCore import Signal
@@ -282,9 +282,7 @@ class FolderUploadWorker(UploadWorker):
             planned = planned_files[index_in_batch]
             account_id = assignment[index_in_batch]
             if account_id is None:
-                raise RuntimeError(
-                    "no linked account has room for this file"
-                )
+                raise RuntimeError("no linked account has room for this file")
             return planned, account_id, upload_file(
                 creds[account_id],
                 planned.path,
@@ -296,44 +294,85 @@ class FolderUploadWorker(UploadWorker):
             "folder upload: %d small file(s) over %d streams",
             len(planned_files), workers,
         )
+        recorded: set = set()
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
                 pool.submit(send, i): i for i in range(len(planned_files))
             }
             for future in as_completed(futures):
                 if self.isInterruptionRequested():
-                    for waiting in futures:
-                        waiting.cancel()
                     self._stopped = True
                     break
-                self._done += 1
-                try:
-                    planned, account_id, result = future.result()
-                except Cancelled:
-                    self._stopped = True
-                    break
-                except Exception as exc:  # noqa: BLE001 -- counted, not fatal
-                    failed += 1
-                    name = planned_files[futures[future]].path.name
-                    self.file_failed.emit(name, f"{type(exc).__name__}: {exc}")
-                    self._bytes_done += planned_files[futures[future]].size_bytes
-                    self.overall.emit(self._done, total)
-                    self._report()
-                    continue
+                recorded.add(future)
+                up, fl = self._record(
+                    future, futures, planned_files, folder_ids, index, total
+                )
+                uploaded += up
+                failed += fl
 
-                index.create_file(
-                    planned.path.name,
-                    folder_ids[planned.rel_dir],
-                    result.size_bytes,
-                    account_id,
-                    result.drive_file_id,
-                    md5=result.md5,
-                )
-                uploaded += 1
-                self._bytes_done += planned.size_bytes
-                self.overall.emit(self._done, total)
-                self.status.emit(
-                    f"{planned.path.name}  ({self._done} of {total})"
-                )
-                self._report()
+            if self._stopped:
+                # Stop what has not started, then wait for what is already in
+                # the air and record it anyway. A file that reached Drive
+                # without an index row is an orphan: the next run would upload
+                # a second copy, and only Repair / re-sync would ever find the
+                # first. Cancelling must not manufacture those.
+                for pending in futures:
+                    pending.cancel()
+                finished, _ = wait(futures, return_when=ALL_COMPLETED)
+                landed = 0
+                for future in finished:
+                    if future in recorded or future.cancelled():
+                        continue
+                    up, fl = self._record(
+                        future, futures, planned_files, folder_ids, index,
+                        total, announce=False,
+                    )
+                    uploaded += up
+                    failed += fl
+                    landed += up
+                if landed:
+                    log.info("recorded %d file(s) that landed while stopping", landed)
         return uploaded, failed
+
+    def _record(
+        self, future, futures, planned_files, folder_ids, index, total,
+        announce: bool = True,
+    ) -> tuple[int, int]:
+        """Write one finished upload into the index. Returns (uploaded, failed).
+
+        Called from the worker thread in both the normal loop and the drain
+        after a cancel, so the two cannot disagree about what counts as
+        recorded.
+        """
+        planned = planned_files[futures[future]]
+        try:
+            planned, account_id, result = future.result()
+        except Cancelled:
+            self._stopped = True
+            return 0, 0
+        except Exception as exc:  # noqa: BLE001 -- counted, not fatal
+            self._bytes_done += planned.size_bytes
+            self.file_failed.emit(
+                planned.path.name, f"{type(exc).__name__}: {exc}"
+            )
+            if announce:
+                self._done += 1
+                self.overall.emit(self._done, total)
+            self._report()
+            return 0, 1
+
+        index.create_file(
+            planned.path.name,
+            folder_ids[planned.rel_dir],
+            result.size_bytes,
+            account_id,
+            result.drive_file_id,
+            md5=result.md5,
+        )
+        self._bytes_done += planned.size_bytes
+        if announce:
+            self._done += 1
+            self.overall.emit(self._done, total)
+            self.status.emit(f"{planned.path.name}  ({self._done} of {total})")
+        self._report()
+        return 1, 0
