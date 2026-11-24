@@ -158,3 +158,186 @@ def test_a_resumed_run_skips_exactly_what_landed(tmp_path, index):
                  if not already_there(index, ids[p.rel_dir], p.path.name)]
 
     assert remaining == ["f3.txt", "f4.txt"]
+
+
+# -- the parallel driver -----------------------------------------------------
+
+import threading
+from pathlib import Path as _Path
+
+from gstore.local_tree import PlannedFile
+from gstore.ui import folder_upload_worker as fuw
+from gstore.auth.accounts import Account
+
+
+def _acct(account_id: int, free_mb: int) -> Account:
+    mb = 1024 * 1024
+    return Account(
+        id=account_id, email=f"a{account_id}@x.com",
+        quota_limit_bytes=100 * mb, quota_used_bytes=(100 - free_mb) * mb,
+        quota_synced_at="2026-01-01", status="active", created_at="2026-01-01",
+    )
+
+
+class _Accounts:
+    def get_credentials(self, account_id):
+        return f"creds{account_id}"
+
+
+class _Folders:
+    def folder_id(self, account_id):
+        return f"gstore-folder-{account_id}"
+
+
+class _Result:
+    def __init__(self, drive_id):
+        self.drive_file_id = drive_id
+        self.size_bytes = 10
+        self.md5 = "m"
+
+
+def _planned(n: int) -> list[PlannedFile]:
+    return [
+        PlannedFile(path=_Path(f"/tmp/f{i}.txt"), rel_dir=(), size_bytes=10)
+        for i in range(n)
+    ]
+
+
+@pytest.fixture
+def worker():
+    w = fuw.FolderUploadWorker("/tmp/folder", None)
+    w._done = 0
+    return w
+
+
+@pytest.fixture
+def linked(index):
+    """Real account rows, because files.home_account_id is a foreign key.
+
+    The constraint is right and the fixture was wrong: an index row claiming
+    an account that does not exist is exactly what it is there to stop.
+    """
+    for account_id in (1, 2):
+        index.db.conn.execute(
+            "INSERT INTO accounts(id, email) VALUES(?, ?)",
+            (account_id, f"a{account_id}@x.com"),
+        )
+    index.db.conn.commit()
+    return index
+
+
+def test_every_small_file_is_uploaded_and_recorded(linked, worker, monkeypatch):
+    index = linked
+    files = _planned(12)
+    calls: list[str] = []
+    lock = threading.Lock()
+
+    def fake_upload(creds, path, parent_id=None, **kw):
+        with lock:
+            calls.append(str(path))
+        return _Result(f"drive-{_Path(path).name}")
+
+    monkeypatch.setattr(fuw, "upload_file", fake_upload)
+    root = index.create_folder("folder", None)
+
+    uploaded, failed = worker._upload_in_parallel(
+        files, {(): root}, _Accounts(), index, _Folders(),
+        [_acct(1, 50), _acct(2, 50)], len(files),
+    )
+
+    assert (uploaded, failed) == (12, 0)
+    assert len(calls) == 12
+    assert len(index.list_files(root)) == 12, "each landed in the index once"
+
+
+def test_the_upload_really_runs_concurrently(linked, worker, monkeypatch):
+    index = linked
+    """The whole point: 12 files must not be 12 sequential round trips."""
+    import time
+
+    peak = 0
+    live = 0
+    lock = threading.Lock()
+
+    def fake_upload(creds, path, parent_id=None, **kw):
+        nonlocal peak, live
+        with lock:
+            live += 1
+            peak = max(peak, live)
+        time.sleep(0.05)
+        with lock:
+            live -= 1
+        return _Result(f"drive-{_Path(path).name}")
+
+    monkeypatch.setattr(fuw, "upload_file", fake_upload)
+    root = index.create_folder("folder", None)
+
+    worker._upload_in_parallel(
+        _planned(12), {(): root}, _Accounts(), index, _Folders(),
+        [_acct(1, 50)], 12,
+    )
+
+    assert peak > 1, "files were sent one at a time"
+
+
+def test_one_failure_is_counted_and_the_rest_still_land(linked, worker, monkeypatch):
+    index = linked
+    def fake_upload(creds, path, parent_id=None, **kw):
+        if _Path(path).name == "f3.txt":
+            raise RuntimeError("Drive said no")
+        return _Result(f"drive-{_Path(path).name}")
+
+    monkeypatch.setattr(fuw, "upload_file", fake_upload)
+    root = index.create_folder("folder", None)
+
+    uploaded, failed = worker._upload_in_parallel(
+        _planned(8), {(): root}, _Accounts(), index, _Folders(),
+        [_acct(1, 50)], 8,
+    )
+
+    assert (uploaded, failed) == (7, 1)
+    assert "f3.txt" not in {e.name for e in index.list_files(root)}
+
+
+def test_a_file_too_big_for_every_account_is_reported_not_crashed(
+    index, worker, monkeypatch
+):
+    monkeypatch.setattr(fuw, "upload_file", lambda *a, **k: _Result("x"))
+    root = index.create_folder("folder", None)
+    huge = [PlannedFile(path=_Path("/tmp/huge.bin"), rel_dir=(),
+                        size_bytes=999 * 1024 * 1024)]
+
+    uploaded, failed = worker._upload_in_parallel(
+        huge, {(): root}, _Accounts(), index, _Folders(), [_acct(1, 5)], 1,
+    )
+
+    assert (uploaded, failed) == (0, 1)
+
+
+def test_nothing_to_send_is_not_an_error(index, worker, monkeypatch):
+    monkeypatch.setattr(fuw, "upload_file", lambda *a, **k: _Result("x"))
+
+    assert worker._upload_in_parallel(
+        [], {}, _Accounts(), index, _Folders(), [_acct(1, 50)], 0
+    ) == (0, 0)
+
+
+def test_each_file_goes_to_its_planned_accounts_folder(linked, worker, monkeypatch):
+    index = linked
+    seen: dict[str, str] = {}
+    lock = threading.Lock()
+
+    def fake_upload(creds, path, parent_id=None, **kw):
+        with lock:
+            seen[_Path(path).name] = parent_id
+        return _Result("x")
+
+    monkeypatch.setattr(fuw, "upload_file", fake_upload)
+    root = index.create_folder("folder", None)
+
+    worker._upload_in_parallel(
+        _planned(6), {(): root}, _Accounts(), index, _Folders(),
+        [_acct(1, 50), _acct(2, 50)], 6,
+    )
+
+    assert all(v.startswith("gstore-folder-") for v in seen.values()), seen

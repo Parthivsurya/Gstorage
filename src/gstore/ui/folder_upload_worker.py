@@ -24,14 +24,18 @@ Three behaviours worth knowing:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from PySide6.QtCore import Signal
 
+from gstore.applog import get as get_logger
 from gstore.auth.accounts import AccountStore
 from gstore.db import Database
+from gstore.drive.chunk_upload import stream_count
 from gstore.drive.folder import FolderResolver
-from gstore.drive.placement import free_bytes
+from gstore.drive.placement import free_bytes, plan_file_placement
+from gstore.drive.upload import SIMPLE_MAX_BYTES, upload_file
 from gstore.drive.quota import fetch_storage_quota
 from gstore.format import human_bytes
 from gstore.drive.rate_limit import Cancelled
@@ -40,6 +44,8 @@ from gstore.index.pending_chunks import PendingChunks
 from gstore.index.uploads import UploadSessions
 from gstore.local_tree import scan_folder
 from gstore.ui.upload_worker import UploadWorker
+
+log = get_logger(__name__)
 
 
 def build_folder_tree(
@@ -89,6 +95,8 @@ class FolderUploadWorker(UploadWorker):
         # The UI scans first so it can show the counts before anything starts;
         # reusing that plan avoids walking the tree a second time.
         self.plan = plan
+        self._done = 0
+        self._stopped = False
 
     def run(self) -> None:
         db = Database().open()
@@ -153,22 +161,44 @@ class FolderUploadWorker(UploadWorker):
                 )
                 return
 
-            total = len(plan.files)
-            for number, planned in enumerate(plan.files, start=1):
+            # Anything already in its target folder is settled before a single
+            # request goes out, so a resumed run does no network work for it.
+            todo = []
+            for planned in plan.files:
+                if already_there(index, folder_ids[planned.rel_dir],
+                                 planned.path.name):
+                    skipped += 1
+                else:
+                    todo.append(planned)
+
+            # Small files go up in parallel; the big ones run one at a time
+            # because each already spreads its own chunks across accounts at
+            # the same width, and stacking the two would multiply the streams.
+            small = [p for p in todo if p.size_bytes <= SIMPLE_MAX_BYTES]
+            large = [p for p in todo if p.size_bytes > SIMPLE_MAX_BYTES]
+            total = len(todo)
+            self._done = 0
+
+            up, fail = self._upload_in_parallel(
+                small, folder_ids, accounts, index, folders, fresh, total
+            )
+            uploaded += up
+            failed += fail
+            if self._stopped:
+                self.cancelled.emit()
+                return
+
+            for planned in large:
                 if self.isInterruptionRequested():
                     self.cancelled.emit()
                     return
-
-                target_folder = folder_ids[planned.rel_dir]
-                self.overall.emit(number, total)
-                self.status.emit(f"{planned.path.name}  ({number} of {total})")
-
-                if already_there(index, target_folder, planned.path.name):
-                    skipped += 1
-                    continue
-
+                self._done += 1
+                self.overall.emit(self._done, total)
+                self.status.emit(
+                    f"{planned.path.name}  ({self._done} of {total})"
+                )
                 self.local_path = planned.path
-                self.parent_id = target_folder
+                self.parent_id = folder_ids[planned.rel_dir]
                 try:
                     self._upload_one(
                         accounts, index, sessions, pending, folders,
@@ -189,3 +219,89 @@ class FolderUploadWorker(UploadWorker):
             self.failed.emit(str(exc))
         finally:
             db.close()
+
+    def _upload_in_parallel(
+        self, planned_files, folder_ids, accounts, index, folders,
+        account_list, total,
+    ) -> tuple[int, int]:
+        """Send the small files concurrently; record each as it lands.
+
+        Only the network happens in the pool. Every index write stays on this
+        thread, because a SQLite connection belongs to the thread that opened
+        it — the same rule the chunked upload follows for its credentials.
+
+        Accounts are assigned for the whole batch up front rather than per
+        file: workers running at the same time cannot each ask which account
+        has the most room, or they would all be told the same one and fill it
+        past its quota.
+        """
+        uploaded = failed = 0
+        self._stopped = False
+        if not planned_files:
+            return 0, 0
+
+        assignment = plan_file_placement(
+            account_list, [p.size_bytes for p in planned_files]
+        )
+        creds = {
+            a.id: accounts.get_credentials(a.id)
+            for a in account_list
+            if a.id in {x for x in assignment if x is not None}
+        }
+        parents = {aid: folders.folder_id(aid) for aid in creds}
+
+        def send(index_in_batch: int):
+            planned = planned_files[index_in_batch]
+            account_id = assignment[index_in_batch]
+            if account_id is None:
+                raise RuntimeError(
+                    "no linked account has room for this file"
+                )
+            return planned, account_id, upload_file(
+                creds[account_id],
+                planned.path,
+                parent_id=parents.get(account_id),
+            )
+
+        workers = min(stream_count() * 2, max(1, len(planned_files)))
+        log.info(
+            "folder upload: %d small file(s) over %d streams",
+            len(planned_files), workers,
+        )
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(send, i): i for i in range(len(planned_files))
+            }
+            for future in as_completed(futures):
+                if self.isInterruptionRequested():
+                    for waiting in futures:
+                        waiting.cancel()
+                    self._stopped = True
+                    break
+                self._done += 1
+                try:
+                    planned, account_id, result = future.result()
+                except Cancelled:
+                    self._stopped = True
+                    break
+                except Exception as exc:  # noqa: BLE001 -- counted, not fatal
+                    failed += 1
+                    name = planned_files[futures[future]].path.name
+                    self.file_failed.emit(name, f"{type(exc).__name__}: {exc}")
+                    self.overall.emit(self._done, total)
+                    continue
+
+                index.create_file(
+                    planned.path.name,
+                    folder_ids[planned.rel_dir],
+                    result.size_bytes,
+                    account_id,
+                    result.drive_file_id,
+                    md5=result.md5,
+                )
+                uploaded += 1
+                self.overall.emit(self._done, total)
+                self.status.emit(
+                    f"{planned.path.name}  ({self._done} of {total})"
+                )
+        return uploaded, failed

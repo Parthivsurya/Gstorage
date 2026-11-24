@@ -388,12 +388,21 @@ class _RecordingFiles:
         self._bodies.append(body)
         return _OneShotUpload()
 
+    # The small-file path reaches files().create the same way; nothing else
+    # of the service is touched.
+
 
 class _OneShotUpload:
+    """Answers both shapes: resumable next_chunk and the one-request execute."""
+
     resumable_uri = "https://upload.example/session"
+    _RESPONSE = {"id": "uploaded1", "size": "3", "md5Checksum": None}
 
     def next_chunk(self):
-        return None, {"id": "uploaded1", "size": "3", "md5Checksum": _ABC_MD5}
+        return None, dict(self._RESPONSE, md5Checksum=_ABC_MD5)
+
+    def execute(self):
+        return dict(self._RESPONSE, md5Checksum=_ABC_MD5)
 
 
 _ABC_MD5 = "900150983cd24fb0d6963f7d28e17f72"  # md5(b"abc")

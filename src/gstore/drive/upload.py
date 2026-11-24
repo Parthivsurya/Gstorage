@@ -33,6 +33,12 @@ from gstore.drive.service import drive_service
 
 _CHUNK_BYTES = 5 * 1024 * 1024  # 5 MB resumable chunks
 
+# At or below this, a resumable session costs more than it saves: initiating
+# one is an extra round trip, and there is nothing meaningful to resume in a
+# file that transfers in a single request. A folder of small files pays that
+# overhead once per file, which is most of what makes such a folder slow.
+SIMPLE_MAX_BYTES = 4 * 1024 * 1024
+
 # A stored session URI that the server no longer recognizes -> start over.
 _DEAD_SESSION_STATUS = {404, 410}
 
@@ -59,6 +65,55 @@ def _status_of(err: HttpError) -> int | None:
     if status is None and err.resp is not None:
         status = err.resp.status
     return status
+
+
+def _verify_or_remove(
+    credentials: Credentials, path: Path, drive_id: str, local_md5: str,
+    remote_md5: str | None,
+) -> None:
+    """Raise (after deleting the remote copy) if Drive's checksum disagrees."""
+    if remote_md5 is None or remote_md5 == local_md5:
+        return
+    try:
+        delete_drive_file(credentials, drive_id)
+    except Exception:
+        pass  # best-effort cleanup; surface the integrity failure regardless
+    raise IntegrityError(
+        f"Checksum mismatch uploading {path.name}: "
+        f"local {local_md5} != Drive {remote_md5}. The corrupt copy was removed."
+    )
+
+
+def _upload_simple(
+    credentials: Credentials,
+    service,
+    path: Path,
+    local_md5: str,
+    parent_id: str | None,
+    on_progress: Callable[[float], None] | None,
+) -> UploadResult:
+    """Send a small file in one request instead of a resumable session.
+
+    Same guarantees as the resumable path — the checksum is still verified
+    and a mismatched copy is still removed — with two fewer round trips.
+    """
+    body: dict = {"name": path.name}
+    if parent_id:
+        body["parents"] = [parent_id]
+    media = MediaFileUpload(str(path), resumable=False)
+    request = service.files().create(
+        body=body, media_body=media, fields="id,size,md5Checksum"
+    )
+    response = execute_with_backoff(request.execute)
+
+    drive_id = response["id"]
+    _verify_or_remove(
+        credentials, path, drive_id, local_md5, response.get("md5Checksum")
+    )
+    if on_progress is not None:
+        on_progress(1.0)
+    size = int(response.get("size") or path.stat().st_size)
+    return UploadResult(drive_file_id=drive_id, size_bytes=size, md5=local_md5)
 
 
 def upload_file(
@@ -89,6 +144,11 @@ def upload_file(
     path = Path(local_path)
     local_md5 = md5_of_file(path)
     service = drive_service(credentials)
+
+    if session is None and path.stat().st_size <= SIMPLE_MAX_BYTES:
+        return _upload_simple(
+            credentials, service, path, local_md5, parent_id, on_progress
+        )
 
     def _new_request():
         media = MediaFileUpload(str(path), resumable=True, chunksize=_CHUNK_BYTES)

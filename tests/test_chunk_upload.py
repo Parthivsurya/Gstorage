@@ -691,3 +691,103 @@ def test_the_folder_is_resolved_once_per_account_not_once_per_chunk(drive, tmp_p
 
     assert len(drive.parents) == 8, "all eight chunks were sent"
     assert calls == [1], "but the folder was looked up exactly once"
+
+
+# -- planning a whole batch of files at once ---------------------------------
+
+
+def test_batch_placement_deducts_as_it_goes():
+    """Parallel workers cannot each ask which account has room.
+
+    Without deduction every file is told the same account has the most free
+    space, and together they overfill it past its quota.
+    """
+    from gstore.drive.placement import plan_file_placement
+
+    accounts = [_account(1, 10 * MB), _account(2, 10 * MB)]
+    sizes = [6 * MB, 6 * MB]
+
+    assigned = plan_file_placement(accounts, sizes)
+
+    assert set(assigned) == {1, 2}, "6+6 cannot both fit on one 10 MB account"
+
+
+def test_batch_placement_returns_one_entry_per_file_in_order():
+    from gstore.drive.placement import plan_file_placement
+
+    accounts = [_account(1, 100 * MB)]
+    sizes = [MB, 2 * MB, 3 * MB]
+
+    assigned = plan_file_placement(accounts, sizes)
+
+    assert assigned == [1, 1, 1]
+
+
+def test_a_file_too_big_for_any_account_is_left_for_chunking():
+    from gstore.drive.placement import plan_file_placement
+
+    accounts = [_account(1, 5 * MB), _account(2, 5 * MB)]
+    sizes = [20 * MB, MB]
+
+    assigned = plan_file_placement(accounts, sizes)
+
+    assert assigned[0] is None, "20 MB fits in neither; chunk it"
+    assert assigned[1] is not None
+
+
+def test_the_total_assigned_never_exceeds_an_accounts_free_space():
+    from gstore.drive.placement import free_bytes, plan_file_placement
+
+    accounts = [_account(1, 10 * MB), _account(2, 4 * MB)]
+    sizes = [3 * MB, 3 * MB, 3 * MB, 3 * MB]
+
+    assigned = plan_file_placement(accounts, sizes)
+
+    per_account: dict[int, int] = {}
+    for account_id, size in zip(assigned, sizes):
+        if account_id is not None:
+            per_account[account_id] = per_account.get(account_id, 0) + size
+    for account in accounts:
+        used = per_account.get(account.id, 0)
+        assert used <= (free_bytes(account) or 0), (
+            f"account {account.id} was given {used} but has "
+            f"{free_bytes(account)}"
+        )
+
+
+def test_an_unlimited_account_takes_everything():
+    from gstore.drive.placement import plan_file_placement
+
+    accounts = [_account(1, None), _account(2, 5 * MB)]
+
+    assigned = plan_file_placement(accounts, [50 * MB, 50 * MB])
+
+    assert assigned == [1, 1]
+
+
+def test_an_account_with_no_quota_snapshot_is_not_used():
+    """Same rule choose_account follows: never place blind."""
+    from gstore.drive.placement import plan_file_placement
+
+    accounts = [_account(1, 50 * MB, synced=False)]
+
+    assert plan_file_placement(accounts, [MB]) == [None]
+
+
+def test_big_files_are_placed_before_small_ones():
+    """Packing the large file first leaves the small ones somewhere to go."""
+    from gstore.drive.placement import plan_file_placement
+
+    accounts = [_account(1, 10 * MB), _account(2, 10 * MB)]
+    sizes = [MB, MB, 9 * MB]  # the 9 MB must not be squeezed out by the 1 MBs
+
+    assigned = plan_file_placement(accounts, sizes)
+
+    assert assigned[2] is not None, "the large file still found a home"
+    assert all(a is not None for a in assigned)
+
+
+def test_no_files_plans_nothing():
+    from gstore.drive.placement import plan_file_placement
+
+    assert plan_file_placement([_account(1, 10 * MB)], []) == []

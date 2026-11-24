@@ -115,3 +115,40 @@ def plan_missing_chunks(
     """
     missing = [r for r in chunk_ranges(size_bytes, chunk_size) if r[0] not in completed_sequences]
     return _assign(missing, accounts)
+
+
+def plan_file_placement(
+    accounts: list[Account], sizes: list[int]
+) -> list[int | None]:
+    """Assign an account to each size up front; None means it needs chunking.
+
+    Returned in the same order as `sizes`.
+
+    Uploading a folder in parallel cannot have each worker call
+    :func:`choose_account`: none of them would see what the others are about
+    to consume, so they would all pick the account with the most room and
+    together overfill it. Planning the whole batch first deducts as it goes,
+    so the total actually fits.
+
+    Largest first, because packing the big files while the most room is
+    available leaves the small ones somewhere to go.
+    """
+    synced = [a for a in accounts if a.quota_synced_at is not None]
+    unlimited = next(
+        (a for a in synced if a.quota_limit_bytes is None), None
+    )
+    if unlimited is not None:
+        return [unlimited.id for _ in sizes]
+
+    remaining = {a.id: (free_bytes(a) or 0) for a in synced}
+    assigned: list[int | None] = [None] * len(sizes)
+
+    for position in sorted(range(len(sizes)), key=lambda i: sizes[i], reverse=True):
+        size = sizes[position]
+        fitting = [aid for aid, free in remaining.items() if free >= size]
+        if not fitting:
+            continue  # too big for any one account -> chunk it
+        best = max(fitting, key=lambda aid: remaining[aid])
+        remaining[best] -= size
+        assigned[position] = best
+    return assigned
