@@ -11,7 +11,7 @@ from pathlib import Path
 
 from gstore.config import database_path
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
@@ -57,6 +57,7 @@ _MIGRATIONS: dict[int, list[str]] = {
         " part_count INTEGER NOT NULL DEFAULT 0,"
         " shared_at TEXT NOT NULL DEFAULT (datetime('now')))"
     ],
+    11: ["ALTER TABLE accounts ADD COLUMN drive_folder_id TEXT"],
     9: [
         "CREATE TABLE IF NOT EXISTS download_progress ("
         " dest_path TEXT NOT NULL,"

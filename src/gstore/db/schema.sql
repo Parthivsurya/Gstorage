@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     quota_limit_bytes  INTEGER,
     quota_used_bytes   INTEGER,
     quota_synced_at    TEXT,
+    -- Drive id of the per-account "Gstore" folder every upload is placed in,
+    -- NULL until the first upload on this account creates it. Held by id and
+    -- never by name, so the user may rename or move the folder freely.
+    drive_folder_id    TEXT,
     -- 'active' or 'revoked'. Set to 'revoked' when a token refresh fails so
     -- the UI can flag it and its files; re-linking resets it to 'active'.
     -- The row (and its files) is kept on revoke so re-link restores access.

@@ -28,6 +28,8 @@ class Account:
     quota_synced_at: str | None
     status: str
     created_at: str
+    # Drive id of this account's Gstore folder; None until one is created.
+    drive_folder_id: str | None = None
 
     @property
     def is_revoked(self) -> bool:
@@ -61,7 +63,8 @@ class AccountStore:
     def list_accounts(self) -> list[Account]:
         rows = self.db.conn.execute(
             "SELECT id, email, quota_limit_bytes, quota_used_bytes, "
-            "quota_synced_at, status, created_at FROM accounts ORDER BY created_at, id"
+            "quota_synced_at, status, created_at, drive_folder_id "
+            "FROM accounts ORDER BY created_at, id"
         ).fetchall()
         return [
             Account(
@@ -72,6 +75,7 @@ class AccountStore:
                 quota_synced_at=r["quota_synced_at"],
                 status=r["status"],
                 created_at=r["created_at"],
+                drive_folder_id=r["drive_folder_id"],
             )
             for r in rows
         ]
@@ -80,6 +84,21 @@ class AccountStore:
         """Update an account's health status ('active' | 'revoked')."""
         self.db.conn.execute(
             "UPDATE accounts SET status = ? WHERE id = ?", (status, account_id)
+        )
+        self.db.conn.commit()
+
+    def drive_folder_id(self, account_id: int) -> str | None:
+        """The Drive id of this account's Gstore folder, if one is known."""
+        row = self.db.conn.execute(
+            "SELECT drive_folder_id FROM accounts WHERE id = ?", (account_id,)
+        ).fetchone()
+        return None if row is None else row["drive_folder_id"]
+
+    def set_drive_folder_id(self, account_id: int, folder_id: str | None) -> None:
+        """Remember the folder to place this account's uploads in."""
+        self.db.conn.execute(
+            "UPDATE accounts SET drive_folder_id = ? WHERE id = ?",
+            (folder_id, account_id),
         )
         self.db.conn.commit()
 
