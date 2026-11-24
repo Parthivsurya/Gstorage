@@ -110,25 +110,55 @@ class UploadWorker(QThread):
         # for the whole transfer: see gstore.drive.folder.FolderResolver.
         folders = FolderResolver(accounts)
         try:
-            account_list = accounts.list_accounts()
-            if not account_list:
+            if not accounts.list_accounts():
                 self.failed.emit("Link a Google account first (Storage tab).")
                 return
+            self._upload_one(accounts, index, sessions, pending, folders)
+        except Cancelled:
+            # Paused, not failed: the resumable session / staged chunks remain.
+            self.cancelled.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        finally:
+            db.close()
 
-            stat = self.local_path.stat()
-            size, mtime_ns = stat.st_size, stat.st_mtime_ns
-            path_key = str(self.local_path)
+    def _upload_one(
+        self,
+        accounts,
+        index,
+        sessions,
+        pending,
+        folders,
+        refresh_quotas: bool = True,
+    ) -> None:
+        """Place and upload `self.local_path` into `self.parent_id`.
 
-            # Resume an interrupted whole-file upload on its original account if
-            # one exists and the file is unchanged; otherwise place it fresh.
-            target = None
-            resume = sessions.find(path_key, size, mtime_ns)
-            if resume is not None:
-                target = next((a for a in account_list if a.id == resume[0]), None)
-                if target is None:
-                    sessions.clear(path_key)  # home account is gone
+        Split out of :meth:`run` so FolderUploadWorker can drive it once per
+        file instead of reimplementing placement, resume and chunking — one
+        copy of that logic, not two that drift apart.
 
+        `refresh_quotas` is False when the caller has already refreshed them
+        for this batch. A folder of 500 files would otherwise re-read every
+        account's quota 500 times; both upload paths write the quota back when
+        they finish, so the recorded figures stay accurate between files.
+        """
+        account_list = accounts.list_accounts()
+
+        stat = self.local_path.stat()
+        size, mtime_ns = stat.st_size, stat.st_mtime_ns
+        path_key = str(self.local_path)
+
+        # Resume an interrupted whole-file upload on its original account if
+        # one exists and the file is unchanged; otherwise place it fresh.
+        target = None
+        resume = sessions.find(path_key, size, mtime_ns)
+        if resume is not None:
+            target = next((a for a in account_list if a.id == resume[0]), None)
             if target is None:
+                sessions.clear(path_key)  # home account is gone
+
+        if target is None:
+            if refresh_quotas:
                 # Refresh quotas so placement reflects real free space.
                 for account in account_list:
                     try:
@@ -140,26 +170,19 @@ class UploadWorker(QThread):
                     except Exception:
                         pass  # unreachable account is skipped for placement
 
-                fresh = accounts.list_accounts()
-                target = choose_account(fresh, size)
-                if target is None:
-                    # No single account fits — split across several.
-                    self._upload_chunked(
-                        accounts, index, pending, fresh, size, mtime_ns, path_key,
-                        folders,
-                    )
-                    return
+            fresh = accounts.list_accounts()
+            target = choose_account(fresh, size)
+            if target is None:
+                # No single account fits — split across several.
+                self._upload_chunked(
+                    accounts, index, pending, fresh, size, mtime_ns, path_key,
+                    folders,
+                )
+                return
 
-            self._upload_whole(
-                accounts, index, sessions, target, size, mtime_ns, path_key, folders
-            )
-        except Cancelled:
-            # Paused, not failed: the resumable session / staged chunks remain.
-            self.cancelled.emit()
-        except Exception as exc:
-            self.failed.emit(str(exc))
-        finally:
-            db.close()
+        self._upload_whole(
+            accounts, index, sessions, target, size, mtime_ns, path_key, folders
+        )
 
     # -- whole-file -----------------------------------------------------------
 
