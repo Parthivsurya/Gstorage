@@ -51,3 +51,6 @@ assets/social/
 packaging/cardkit.py
 packaging/make_poster.py
 packaging/make_release_card.py
+
+# Arena tournament state — large, local, and not part of the project.
+.arena/
