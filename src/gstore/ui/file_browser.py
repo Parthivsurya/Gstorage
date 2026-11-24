@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from gstore import config
 from gstore.format import human_bytes, human_duration, human_rate
+from gstore.local_tree import SKIPPED_DEPENDENCY, scan_folder
 from gstore.index import FileEntry, IndexStore
 from gstore.index.shares import Shares
 from gstore.ui.delete_worker import DeleteWorker
@@ -801,11 +802,42 @@ class FileBrowser(QWidget):
         path = QFileDialog.getExistingDirectory(self, "Choose a folder to upload")
         if not path:
             return
+
+        # Scanning is stat-only and finishes instantly even on a tree of
+        # 28,000 files, so the counts can be shown before anything starts.
+        # Without this a project folder silently became an eight-hour upload
+        # of its node_modules.
+        plan = scan_folder(path)
+        if not plan.files:
+            QMessageBox.information(
+                self, "Nothing to upload",
+                f"{Path(path).name} has no files to upload.",
+            )
+            return
+        skipped_deps = sum(
+            1 for _, why in plan.skipped if why == SKIPPED_DEPENDENCY
+        )
+        question = (
+            f"Upload {plan.file_count} file(s) from {Path(path).name}, "
+            f"{human_bytes(plan.total_bytes)} in all?"
+        )
+        if skipped_deps:
+            question += (
+                f"\n\n{skipped_deps} dependency folder(s) such as node_modules "
+                "will be left out — they are rebuilt from a manifest rather "
+                "than authored."
+            )
+        if QMessageBox.question(
+            self, "Upload folder", question,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        ) != QMessageBox.StandardButton.Yes:
+            return
         # Per-file bytes drive the bar; the overall label says which file of
         # how many, because one bar cannot honestly show both.
         self._begin_transfer("Reading the folder…", determinate=True)
 
-        worker = FolderUploadWorker(path, self.current_parent_id, self)
+        worker = FolderUploadWorker(path, self.current_parent_id, self, plan=plan)
         worker.progress.connect(self._on_transfer_progress)
         worker.status.connect(self._set_transfer_message)
         worker.overall.connect(self._on_folder_upload_overall)

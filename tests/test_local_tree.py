@@ -16,6 +16,7 @@ import os
 import pytest
 
 from gstore.local_tree import (
+    SKIPPED_DEPENDENCY,
     SKIPPED_HIDDEN,
     SKIPPED_SYMLINK,
     SKIPPED_UNREADABLE,
@@ -195,3 +196,76 @@ def test_total_bytes_counts_only_what_will_be_uploaded(tmp_path):
     plan = scan_folder(tmp_path)
 
     assert plan.total_bytes == 150, "the hidden file must not inflate the total"
+
+
+# -- dependency directories --------------------------------------------------
+
+
+def test_node_modules_is_skipped_by_default(tmp_path):
+    """The case that turned a 69-file project into a 28,481-file upload."""
+    _tree(tmp_path, {
+        "src/app.js": b"mine",
+        "package.json": b"{}",
+        "node_modules/react/index.js": b"theirs",
+        "node_modules/lodash/x.js": b"theirs",
+    })
+
+    plan = scan_folder(tmp_path)
+
+    assert _names(plan) == {"app.js", "package.json"}
+    assert any(why == SKIPPED_DEPENDENCY for _, why in plan.skipped)
+
+
+def test_a_nested_node_modules_is_skipped_too(tmp_path):
+    """frontend/node_modules held 4,439 files in the folder that prompted this."""
+    _tree(tmp_path, {
+        "frontend/src/a.js": b"mine",
+        "frontend/node_modules/pkg/i.js": b"theirs",
+    })
+
+    plan = scan_folder(tmp_path)
+
+    assert _names(plan) == {"a.js"}
+    assert ("frontend", "node_modules") not in plan.dirs
+
+
+def test_other_generated_directories_are_skipped(tmp_path):
+    _tree(tmp_path, {
+        "keep.txt": b"x",
+        "__pycache__/m.pyc": b"x",
+        "build/out.o": b"x",
+        "dist/bundle.js": b"x",
+        "target/debug/bin": b"x",
+        "vendor/lib.go": b"x",
+    })
+
+    plan = scan_folder(tmp_path)
+
+    assert _names(plan) == {"keep.txt"}
+
+
+def test_dependencies_can_be_taken_deliberately(tmp_path):
+    """Skipping is a default, not a rule the user cannot override."""
+    _tree(tmp_path, {"a.js": b"x", "node_modules/pkg/i.js": b"y"})
+
+    plan = scan_folder(tmp_path, skip_dependencies=False)
+
+    assert _names(plan) == {"a.js", "i.js"}
+
+
+def test_a_file_named_like_a_dependency_dir_is_still_uploaded(tmp_path):
+    """Only directories are skipped; a file called 'build' is the user's."""
+    _tree(tmp_path, {"build": b"a script, not a folder"})
+
+    plan = scan_folder(tmp_path)
+
+    assert _names(plan) == {"build"}
+
+
+def test_the_skip_is_reported_so_it_is_never_silent(tmp_path):
+    _tree(tmp_path, {"a.js": b"x", "node_modules/pkg/i.js": b"y"})
+
+    plan = scan_folder(tmp_path)
+    reasons = [(p.name, why) for p, why in plan.skipped]
+
+    assert ("node_modules", SKIPPED_DEPENDENCY) in reasons

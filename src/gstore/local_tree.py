@@ -15,6 +15,10 @@ The decisions, and why:
   back missing its empty subfolders would not be the folder that went up.
 * **Unreadable entries are recorded, not raised.** One bad file should not
   stop the other 499.
+* **Dependency directories are skipped**, `node_modules` above all. They are
+  rebuilt from a manifest rather than authored, and they dwarf everything
+  else: a real project measured here held 28,481 files, 69 of them the
+  user's. Pass ``skip_dependencies=False`` to take them anyway.
 """
 
 from __future__ import annotations
@@ -27,6 +31,31 @@ __all__ = ["PlannedFile", "FolderPlan", "scan_folder"]
 SKIPPED_HIDDEN = "hidden"
 SKIPPED_SYMLINK = "symlink"
 SKIPPED_UNREADABLE = "unreadable"
+SKIPPED_DEPENDENCY = "dependency"
+
+# Directories holding machine-generated content that is rebuilt from a
+# manifest, not authored. A real project measured here was 28,481 files, of
+# which 69 were the user's -- the rest was node_modules. Uploading that costs
+# hours to store something `npm install` reproduces exactly.
+#
+# Skipped by default and always reported, never silently: the count is shown
+# before anything is uploaded so the choice stays the user's.
+DEPENDENCY_DIRS = frozenset({
+    "node_modules",
+    "__pycache__",
+    "venv",
+    "env",
+    "vendor",
+    "Pods",
+    "build",
+    "dist",
+    "target",
+    "out",
+    ".gradle",
+    "DerivedData",
+    "bower_components",
+    "site-packages",
+})
 
 
 @dataclass(frozen=True)
@@ -62,7 +91,9 @@ def _is_hidden(name: str) -> bool:
     return name.startswith(".")
 
 
-def scan_folder(root: str | Path) -> FolderPlan:
+def scan_folder(
+    root: str | Path, skip_dependencies: bool = True
+) -> FolderPlan:
     """Walk `root` and return everything that should be uploaded from it.
 
     Directories come back parents-first; files carry the directory path they
@@ -93,6 +124,9 @@ def scan_folder(root: str | Path) -> FolderPlan:
                 continue
 
             if is_dir:
+                if skip_dependencies and entry.name in DEPENDENCY_DIRS:
+                    plan.skipped.append((entry, SKIPPED_DEPENDENCY))
+                    continue
                 child = rel + (entry.name,)
                 plan.dirs.append(child)       # parent already appended: ordered
                 walk(entry, child)

@@ -78,12 +78,17 @@ class FolderUploadWorker(UploadWorker):
     # name, reason -- a file that could not be uploaded; the run continues.
     file_failed = Signal(str, str)
 
-    def __init__(self, folder_path: str, parent_id: int | None, parent=None) -> None:
+    def __init__(
+        self, folder_path: str, parent_id: int | None, parent=None, plan=None
+    ) -> None:
         # local_path is set per file as the walk proceeds; the base class reads
         # it for each upload.
         super().__init__(folder_path, parent_id, parent)
         self.folder_path = Path(folder_path)
         self.root_parent_id = parent_id
+        # The UI scans first so it can show the counts before anything starts;
+        # reusing that plan avoids walking the tree a second time.
+        self.plan = plan
 
     def run(self) -> None:
         db = Database().open()
@@ -100,7 +105,9 @@ class FolderUploadWorker(UploadWorker):
                 return
 
             self.status.emit("Looking through the folder…")
-            plan = scan_folder(self.folder_path)
+            plan = self.plan if self.plan is not None else scan_folder(
+                self.folder_path
+            )
             if not plan.files and not plan.dirs:
                 self.failed.emit(
                     f"{self.folder_path.name} has nothing in it to upload."
