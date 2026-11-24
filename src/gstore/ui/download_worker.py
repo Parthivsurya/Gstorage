@@ -43,38 +43,11 @@ class DownloadWorker(QThread):
         accounts = AccountStore(db)
         index = IndexStore(db)
         try:
-            entry = index.get_file(self.file_id)
-            if entry is None:
-                self.failed.emit("This file is no longer in the index.")
-                return
-
-            if entry.is_chunked:
-                self._download_chunked(accounts, index, db)
-                return
-
-            if not entry.drive_file_id or entry.home_account_id is None:
-                self.failed.emit("This file has no stored Drive location yet.")
-                return
-
-            try:
-                credentials = accounts.get_credentials(entry.home_account_id)
-            except RefreshError:
-                self.failed.emit(
-                    f"Access to {entry.home_account_email} was revoked or "
-                    "expired. Re-link it in the Storage tab, then retry."
-                )
-                return
-
-            if entry.size_bytes:
-                self.total_bytes.emit(entry.size_bytes)
-            download_file(
-                credentials,
-                entry.drive_file_id,
-                self.dest_path,
-                on_progress=self.progress.emit,
-                expected_md5=entry.md5,
-            )
-            self.succeeded.emit(self.dest_path)
+            error = self._download_one(accounts, index, db)
+            if error:
+                self.failed.emit(error)
+            else:
+                self.succeeded.emit(self.dest_path)
         except Cancelled:
             self.cancelled.emit()
         except NotEnoughSpace as exc:
@@ -85,7 +58,44 @@ class DownloadWorker(QThread):
         finally:
             db.close()
 
-    def _download_chunked(self, accounts, index, db) -> None:
+    def _download_one(self, accounts, index, db) -> str | None:
+        """Fetch `self.file_id` to `self.dest_path`; return an error, or None.
+
+        Returns the message rather than emitting it, so FolderDownloadWorker
+        can count one bad file and carry on while a single-file download still
+        reports it as a failure. Split out of :meth:`run` for that reason —
+        one copy of the whole-file/chunked decision, not two.
+        """
+        entry = index.get_file(self.file_id)
+        if entry is None:
+            return "This file is no longer in the index."
+
+        if entry.is_chunked:
+            return self._download_chunked(accounts, index, db)
+
+        if not entry.drive_file_id or entry.home_account_id is None:
+            return "This file has no stored Drive location yet."
+
+        try:
+            credentials = accounts.get_credentials(entry.home_account_id)
+        except RefreshError:
+            return (
+                f"Access to {entry.home_account_email} was revoked or "
+                "expired. Re-link it in the Storage tab, then retry."
+            )
+
+        if entry.size_bytes:
+            self.total_bytes.emit(entry.size_bytes)
+        download_file(
+            credentials,
+            entry.drive_file_id,
+            self.dest_path,
+            on_progress=self.progress.emit,
+            expected_md5=entry.md5,
+        )
+        return None
+
+    def _download_chunked(self, accounts, index, db) -> str | None:
         chunks = index.list_chunks(self.file_id)
         entry = index.get_file(self.file_id)
 
@@ -121,9 +131,8 @@ class DownloadWorker(QThread):
                 file_id=self.file_id,
             )
         except RefreshError:
-            self.failed.emit(
+            return (
                 "An account holding part of this file was revoked or expired. "
                 "Re-link it in the Storage tab, then retry."
             )
-            return
-        self.succeeded.emit(self.dest_path)
+        return None
