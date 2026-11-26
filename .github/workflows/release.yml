@@ -144,6 +144,9 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # The "What's new" section below is written per release and does NOT
+      # update itself — rewrite it when cutting the next version, or that
+      # version ships describing this one.
       - name: Create the Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -153,6 +156,40 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "Gstore ${GITHUB_REF_NAME}" \
             --notes-file - <<'NOTES'
+          ## What's new in 0.1.5
+
+          **Folders, in both directions.** Upload a folder and its structure is
+          kept, with the files spread across whichever accounts have room — a
+          folder larger than any single account needs nothing special, because
+          each file is placed independently and one too big for all of them is
+          still split across several. Download a folder and it is rebuilt from
+          wherever its pieces live, every file checksum-verified on the way in.
+
+          - **Faster.** Both directions transfer eight files at a time, and
+            small files go up in a single request instead of opening a
+            resumable session they have nothing to resume.
+          - **Interrupted transfers carry on.** Both directions skip what is
+            already there, so stopping at file 200 of 282 and starting again
+            does the remaining 82, not all 282.
+          - **Dependency folders are left out.** `node_modules`, `__pycache__`,
+            `build` and the like, with the count shown before anything starts.
+            One project folder here went from 17,995 files to 60.
+
+          **Your Drive stays tidy.** Everything Gstore writes now goes inside a
+          single `Gstore` folder on each account instead of loose in My Drive's
+          root. **Tidy up my Drive** on the Storage tab moves files uploaded by
+          earlier versions into it — metadata only, so nothing is re-uploaded,
+          nothing is re-downloaded, and existing share links keep working.
+
+          **Large files start sooner.** A file split across accounts used to be
+          read end to end for its checksum before the first piece went out —
+          minutes of a progress bar that could not move. The checksum now runs
+          while the pieces upload, so the transfer starts immediately.
+
+          Upgrading is automatic and keeps everything: the local index migrates
+          itself on first launch, and files uploaded by earlier versions stay
+          exactly where they are until you choose to tidy them.
+
           ## Downloads
 
           | Platform | Download |
@@ -170,9 +207,12 @@ jobs:
           - **macOS** — the app is blocked on first open. Go to System Settings
             -> Privacy & Security, find the notice about Gstore, and choose
             "Open Anyway". The macOS build is Apple silicon only.
-          - **Windows** — SmartScreen shows "Windows protected your PC". Choose
-            "More info" -> "Run anyway". Unzip first; run `Gstore.exe` from the
-            extracted folder, keeping it next to its files.
+          - **Windows** — SmartScreen shows a blue or red "Windows protected
+            your PC" screen, and Defender may say it could not scan the file.
+            Both mean the same thing: the app is not code-signed, not that
+            anything was found in it. Choose "More info" -> "Run anyway".
+            Unzip first, then run `Gstore.exe` from the extracted folder,
+            keeping it next to its files.
           - **Linux** — no warning, but the Qt libraries need a desktop session.
             Extract and run the binary, keeping it next to its files:
 
