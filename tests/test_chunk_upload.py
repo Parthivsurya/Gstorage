@@ -791,3 +791,104 @@ def test_no_files_plans_nothing():
     from gstore.drive.placement import plan_file_placement
 
     assert plan_file_placement([_account(1, 10 * MB)], []) == []
+
+
+# -- the whole-file digest runs beside the upload ----------------------------
+#
+# It used to run in front of it: 20 GB read with the bar pinned and nothing on
+# the wire before a single chunk went out. The digest is not needed until the
+# index row is written, so it belongs alongside the transfer.
+
+
+def test_the_digest_is_correct_whichever_thread_computes_it(tmp_path):
+    from gstore.ui.upload_worker import _BackgroundDigest
+
+    path = tmp_path / "f.bin"
+    payload = b"gstore" * 5000
+    path.write_bytes(payload)
+    seen = []
+
+    job = _BackgroundDigest(path, lambda: False, seen.append)
+    job.start()
+
+    assert job.result() == _md5(payload)
+    assert seen == [_md5(payload)], "the ready callback fires with the digest"
+
+
+def test_the_digest_is_published_before_the_join(tmp_path):
+    """Chunks recorded mid-upload must be able to pick it up."""
+    from gstore.ui.upload_worker import _BackgroundDigest
+
+    path = tmp_path / "f.bin"
+    path.write_bytes(b"x" * 1000)
+    ready = threading.Event()
+    got: list[str] = []
+
+    def on_ready(digest):
+        got.append(digest)
+        ready.set()
+
+    job = _BackgroundDigest(path, lambda: False, on_ready)
+    job.start()
+
+    assert ready.wait(5), "the callback never fired"
+    assert got and got[0] == _md5(b"x" * 1000)
+    job.result()
+
+
+def test_cancelling_yields_no_digest_rather_than_a_wrong_one(tmp_path):
+    from gstore.ui.upload_worker import _BackgroundDigest
+
+    path = tmp_path / "f.bin"
+    path.write_bytes(b"x" * (4 * MB))
+    seen = []
+
+    job = _BackgroundDigest(path, lambda: True, seen.append)
+    job.start()
+
+    assert job.result() is None, "a cancelled hash must not report a digest"
+    assert seen == [], "the callback must not fire for a cancelled hash"
+
+
+def test_a_read_failure_surfaces_on_join(tmp_path):
+    """Silently recording a file with no checksum would be worse."""
+    from gstore.ui.upload_worker import _BackgroundDigest
+
+    job = _BackgroundDigest(tmp_path / "missing.bin", lambda: False, lambda d: None)
+    job.start()
+
+    with pytest.raises(OSError):
+        job.result()
+
+
+def test_it_does_not_report_progress(tmp_path):
+    """The upload owns the bar; two writers made the reading climb twice."""
+    import inspect
+    from gstore.ui import upload_worker
+
+    source = inspect.getsource(upload_worker._BackgroundDigest)
+    assert "on_progress" not in source, (
+        "the digest must not drive the progress bar"
+    )
+
+
+def test_hashing_overlaps_the_upload_rather_than_preceding_it(tmp_path):
+    """The point of the change: bytes move while the file is still hashing."""
+    import time
+    from gstore.ui.upload_worker import _BackgroundDigest
+
+    path = tmp_path / "big.bin"
+    path.write_bytes(b"x" * (8 * MB))
+
+    started = time.time()
+    job = _BackgroundDigest(path, lambda: False, lambda d: None)
+    job.start()
+    # Work the caller would be doing instead of waiting.
+    uploaded_at = time.time()
+    job.result()
+    finished = time.time()
+
+    assert uploaded_at - started < 0.05, (
+        "start() blocked; the upload would still be waiting on the hash"
+    )
+    assert finished >= uploaded_at

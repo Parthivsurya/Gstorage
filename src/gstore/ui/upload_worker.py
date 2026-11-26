@@ -8,6 +8,7 @@ chunks spread across several accounts (Phase B). Uses its own SQLite connection
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError
@@ -82,6 +83,50 @@ class _ChunkResume:
 
     def clear(self) -> None:
         self._pending.clear(self._path)
+
+
+class _BackgroundDigest(threading.Thread):
+    """Computes the whole file's MD5 beside the upload instead of before it.
+
+    The digest is not needed until the index row is written, once every chunk
+    has landed. Computing it first meant reading 20 GB with the bar pinned and
+    nothing on the wire — minutes that looked like a hang before a single byte
+    moved.
+
+    It deliberately reports no progress: the upload owns the bar, so the two
+    cannot fight over it, and a file's reading climbs once rather than twice.
+
+    `on_ready` is called with the digest as soon as it exists, so chunks still
+    being recorded carry it and a later resume does not have to hash again.
+    Assigning one string is atomic under the GIL, which is all that callback
+    does.
+    """
+
+    def __init__(self, path: Path, should_stop, on_ready) -> None:
+        super().__init__(daemon=True)
+        self._path = path
+        self._should_stop = should_stop
+        self._on_ready = on_ready
+        self._digest: str | None = None
+        self._error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            digest = md5_of_file(self._path, should_stop=self._should_stop)
+        except Cancelled:
+            return  # the transfer is stopping; nothing to report
+        except BaseException as exc:  # noqa: BLE001 — re-raised on join
+            self._error = exc
+            return
+        self._digest = digest
+        self._on_ready(digest)
+
+    def result(self) -> str | None:
+        """Wait for the digest; None if it was cancelled. Re-raises failures."""
+        self.join()
+        if self._error is not None:
+            raise self._error
+        return self._digest
 
 
 class UploadWorker(QThread):
@@ -263,19 +308,21 @@ class UploadWorker(QThread):
             )
             return
 
-        # Hashing 19 GB takes minutes. Doing it on every retry, with the bar
-        # pinned at zero, is what made a resumed upload look hung — so the
-        # first attempt's digest is cached against the file's identity and
-        # every later attempt reuses it.
+        # Hashing 19 GB takes minutes. The first attempt's digest is cached
+        # against the file's identity so later attempts reuse it; when there
+        # is no cache, it is computed on another thread *while* the chunks go
+        # up rather than before them, so the transfer starts immediately.
         whole_md5 = resume.cached_file_md5()
+        digest_job: _BackgroundDigest | None = None
         if whole_md5 is None:
-            self.status.emit("Checksumming…")
-            whole_md5 = md5_of_file(
+            digest_job = _BackgroundDigest(
                 self.local_path,
-                on_progress=self._emit_progress,
-                should_stop=self.isInterruptionRequested,
+                self.isInterruptionRequested,
+                lambda found: setattr(resume, "file_md5", found),
             )
-        resume.file_md5 = whole_md5
+            digest_job.start()
+        else:
+            resume.file_md5 = whole_md5
         self.status.emit("Uploading…")
         # The bar was driven by the checksum pass; hand it back to the upload
         # at the fraction already staged. Emitting 0.0 here would be a lie the
@@ -308,6 +355,22 @@ class UploadWorker(QThread):
             self.failed.emit(
                 "An account this file is being split across was revoked or "
                 f"expired. Uploaded chunks were kept to resume. {_REVOKED_HINT}"
+            )
+            return
+        finally:
+            # Collect the digest however this ends. On a cancel the staged
+            # chunks already carry it, so the retry starts without re-reading
+            # the whole file.
+            if digest_job is not None:
+                whole_md5 = digest_job.result() or whole_md5
+
+        if whole_md5 is None:
+            # Only reachable if hashing stopped without the upload stopping.
+            # Recording a file with no checksum would leave a download unable
+            # to tell a good reassembly from a corrupt one.
+            self.failed.emit(
+                "The file could not be checksummed, so it was not recorded. "
+                "The uploaded pieces were kept — try again."
             )
             return
 
