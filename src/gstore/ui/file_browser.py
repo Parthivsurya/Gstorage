@@ -842,6 +842,7 @@ class FileBrowser(QWidget):
         worker = FolderUploadWorker(path, self.current_parent_id, self, plan=plan)
         worker.progress.connect(self._on_transfer_progress)
         worker.status.connect(self._set_transfer_message)
+        worker.total_bytes.connect(self._set_transfer_total)
         worker.overall.connect(self._on_folder_upload_overall)
         worker.file_failed.connect(self._on_folder_upload_file_failed)
         worker.finished_summary.connect(self._on_folder_upload_summary)

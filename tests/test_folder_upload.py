@@ -553,3 +553,119 @@ def test_a_clean_run_is_unaffected_by_the_drain(linked, worker, monkeypatch):
     assert (uploaded, failed) == (10, 0)
     assert worker._stopped is False
     assert len(index.list_files(root)) == 10
+
+
+# -- run() end to end --------------------------------------------------------
+#
+# Every test above calls _upload_in_parallel directly, which is exactly why a
+# missing `total_bytes` signal on run()'s path shipped unnoticed: the method
+# was fine and the method around it was not. These drive run() itself.
+
+
+class _Quota:
+    limit_bytes = 100 * 1024 * 1024
+    used_bytes = 0
+
+
+def _run_folder_upload(tmp_path, monkeypatch, spec):
+    """Drive FolderUploadWorker.run() against a temp index and a fake Drive."""
+    from gstore.auth.accounts import AccountStore
+    from gstore.db.database import Database as RealDatabase
+
+    source = tmp_path / "Pics"
+    for rel, content in spec.items():
+        target = source / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+
+    db_path = tmp_path / "idx.db"
+    db = RealDatabase(db_path).open().initialize()
+    db.conn.execute(
+        "INSERT OR IGNORE INTO accounts(id, email) VALUES(1, 'a@x.com')"
+    )
+    db.conn.commit()
+    db.close()
+
+    monkeypatch.setattr(fuw, "Database", lambda: RealDatabase(db_path))
+    monkeypatch.setattr(fuw, "fetch_storage_quota", lambda creds: _Quota())
+    monkeypatch.setattr(fuw, "upload_file", lambda *a, **k: _Result("drive-x"))
+    monkeypatch.setattr(
+        AccountStore, "get_credentials", lambda self, account_id: "creds"
+    )
+    monkeypatch.setattr(
+        fuw, "FolderResolver", lambda accounts: _Folders()
+    )
+
+    worker = fuw.FolderUploadWorker(str(source), None)
+    events: dict[str, list] = {
+        "summary": [], "failed": [], "totals": [], "progress": []
+    }
+    worker.finished_summary.connect(
+        lambda u, s, f: events["summary"].append((u, s, f))
+    )
+    worker.failed.connect(events["failed"].append)
+    worker.total_bytes.connect(events["totals"].append)
+    worker.progress.connect(events["progress"].append)
+    worker.run()                       # directly, not start(): no thread
+    return worker, events, db_path
+
+
+def test_run_completes_without_an_attribute_error(tmp_path, monkeypatch):
+    """The regression: run() emitted total_bytes, a signal it did not have."""
+    _, events, _ = _run_folder_upload(
+        tmp_path, monkeypatch, {"a.png": b"x" * 10, "b.png": b"y" * 20}
+    )
+
+    assert events["failed"] == [], f"run() reported: {events['failed']}"
+    assert events["summary"] == [(2, 0, 0)]
+
+
+def test_run_announces_the_batch_size_before_uploading(tmp_path, monkeypatch):
+    _, events, _ = _run_folder_upload(
+        tmp_path, monkeypatch, {"a.png": b"x" * 10, "sub/b.png": b"y" * 20}
+    )
+
+    assert events["totals"] == [30], "the UI needs the batch size for its ETA"
+    assert max(events["progress"]) == pytest.approx(1.0)
+
+
+def test_run_recreates_the_folder_tree_in_the_index(tmp_path, monkeypatch):
+    from gstore.db.database import Database as RealDatabase
+
+    _, events, db_path = _run_folder_upload(
+        tmp_path, monkeypatch,
+        {"top.png": b"x", "2024/jan/deep.png": b"y", "2024/feb/other.png": b"z"},
+    )
+
+    assert events["failed"] == []
+    db = RealDatabase(db_path).open()
+    try:
+        names = {
+            r["name"] for r in db.conn.execute("SELECT name FROM folders")
+        }
+        assert {"Pics", "2024", "jan", "feb"} <= names
+        count = db.conn.execute("SELECT count(*) c FROM files").fetchone()["c"]
+        assert count == 3
+    finally:
+        db.close()
+
+
+def test_run_a_second_time_uploads_nothing(tmp_path, monkeypatch):
+    """The resume path through run(): same folder, same index, no new work."""
+    spec = {"a.png": b"x" * 10, "b.png": b"y" * 20}
+    _, first, _ = _run_folder_upload(tmp_path, monkeypatch, spec)
+    _, second, _ = _run_folder_upload(tmp_path, monkeypatch, spec)
+
+    assert first["summary"] == [(2, 0, 0)], "first run uploads both"
+    assert second["summary"] == [(0, 2, 0)], "second run skips both"
+    assert second["failed"] == []
+
+
+def test_an_empty_folder_is_reported_not_crashed(tmp_path, monkeypatch):
+    source = tmp_path / "Pics"
+    source.mkdir()
+    _, events, _ = _run_folder_upload(tmp_path, monkeypatch, {})
+
+    assert events["summary"] == []
+    assert len(events["failed"]) == 1
+    assert "nothing in it" in events["failed"][0]

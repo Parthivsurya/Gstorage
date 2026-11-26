@@ -79,6 +79,11 @@ class FolderUploadWorker(UploadWorker):
 
     # done, total -- which file of how many, for the overall label.
     overall = Signal(int, int)
+    # The batch's size, so the UI can show byte counts, a rate and an ETA.
+    # qint64, not int: Qt maps Signal(int) to a 32-bit C++ int and a folder
+    # over 2 GB would arrive negative. UploadWorker has no such signal --
+    # only DownloadWorker did -- which is why this class must declare it.
+    total_bytes = Signal("qint64")
     # uploaded, skipped, failed
     finished_summary = Signal(int, int, int)
     # name, reason -- a file that could not be uploaded; the run continues.
