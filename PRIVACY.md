@@ -1,6 +1,6 @@
 # Gstore Privacy Policy
 
-_Last updated: 28 October 2026_
+_Last updated: 26 November 2026_
 
 Gstore is a local-only desktop application that pools several of your own Google
 accounts into one unified virtual drive. This policy explains what data Gstore
@@ -152,13 +152,26 @@ That request is a plain, unauthenticated `GET` to GitHub's public releases
 endpoint for this project. It carries **no account information, no file names,
 no email address, no tokens and no identifier of any kind** — only the IP
 address that every HTTP request necessarily reveals, in this case to GitHub.
-Nothing is downloaded or installed automatically; if a newer version exists
-the app shows a notice, and the buttons on it only open your browser.
 
-This is the only request Gstore makes to anywhere other than Google. You can
-switch it off — set the `GSTORE_NO_UPDATE_CHECK` environment variable, or
-create a file named `update_check.disabled` in Gstore's application-data
-directory — and the app will then contact nothing but Google.
+**Nothing is downloaded unless you ask for it, and nothing is ever installed
+for you.** If a newer version exists the app shows a notice. Pressing
+**Download** on that notice fetches two files from GitHub — the build for
+your operating system, and the short signature file published beside it —
+and saves them in an `updates` folder inside Gstore's application-data
+directory. Those requests are unauthenticated too and carry nothing about
+you or your files.
+
+Gstore then checks that signature against a key built into the app and shows
+you the downloaded file. It does not open it, run it, or replace the
+installed application: upgrading is still something you do yourself. If the
+signature does not match, the download is discarded rather than saved, and
+you are told.
+
+Apart from Google, GitHub is the only place Gstore ever contacts. You can
+switch the check off — set the `GSTORE_NO_UPDATE_CHECK` environment
+variable, or create a file named `update_check.disabled` in Gstore's
+application-data directory — and the app will then contact nothing but
+Google. With it off, nothing is ever downloaded either.
 
 ## Third-party services
 
@@ -184,7 +197,7 @@ left to withdraw it. You can still make them private by hand from Google Drive.
 To remove everything Gstore has written, delete:
 
 1. the application-data directory listed above — index, tokens, resume state,
-   share records and log;
+   share records, log, and any update you downloaded;
 2. any leftover `.gstore-part` files beside download destinations you chose;
 3. any index backups you exported yourself.
 
