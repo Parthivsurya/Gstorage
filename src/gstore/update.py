@@ -48,6 +48,10 @@ class Release:
     version: str
     url: str
     notes: str
+    # The release's downloadable files as GitHub reports them, so the app can
+    # pick this platform's build and its signature without a second request.
+    # A tuple, not a list: Release is frozen and should stay hashable.
+    assets: tuple[dict, ...] = ()
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:
@@ -110,4 +114,5 @@ def check_for_update(current_version: str, timeout: int = TIMEOUT_SEC) -> Releas
         version=tag.lstrip("v"),
         url=payload.get("html_url") or RELEASES_PAGE,
         notes=(payload.get("body") or "").strip(),
+        assets=tuple(payload.get("assets") or ()),
     )

@@ -6,7 +6,10 @@ Storage tab: combined-usage dashboard + account management (Phase 2).
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import webbrowser
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -26,7 +29,9 @@ from gstore.db import Database
 from gstore.index import IndexStore
 from gstore.ui.file_browser import FileBrowser
 from gstore.ui.storage_panel import StoragePanel
+from gstore.ui.update_download_worker import UpdateDownloadWorker
 from gstore.ui.update_worker import UpdateWorker
+from gstore.updater.download import asset_name
 
 
 class MainWindow(QMainWindow):
@@ -61,6 +66,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
         self._update_worker: UpdateWorker | None = None
+        self._update_download: UpdateDownloadWorker | None = None
         self._pending_release = None
         self._start_update_check()
 
@@ -70,8 +76,10 @@ class MainWindow(QMainWindow):
         """A strip above the tabs, hidden until there is something to report.
 
         A banner rather than a dialog on launch: an update is worth mentioning,
-        not worth blocking the app behind. Nothing is downloaded or installed
-        automatically — the buttons only open a browser.
+        not worth blocking the app behind. Nothing happens without the user
+        pressing something, and nothing is ever installed automatically: the
+        most Gstore will do is fetch the right file, prove it is genuine, and
+        show it to them.
         """
         self.update_banner = QFrame()
         self.update_banner.setVisible(False)
@@ -87,6 +95,10 @@ class MainWindow(QMainWindow):
         self.update_details_button = QPushButton("What's new")
         self.update_details_button.clicked.connect(self._on_update_details)
         self.update_get_button = QPushButton("Download")
+        self.update_get_button.setToolTip(
+            "Fetch the build for this machine and check it was signed by "
+            "Gstore, then show you the file. Nothing is installed for you."
+        )
         self.update_get_button.clicked.connect(self._on_update_download)
         self.update_later_button = QPushButton("Later")
         self.update_later_button.setToolTip("Hide until the next launch.")
@@ -139,12 +151,86 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, f"Gstore {release.version}", notes)
 
     def _on_update_download(self) -> None:
+        """Fetch this platform's build, verify its signature, and reveal it.
+
+        Picking the right file by hand is a real way to go wrong — three
+        builds are listed and the macOS one is Apple silicon only — and an
+        unsigned download has nothing vouching for it until this checks.
+        Installing is still the user's move; see gstore.updater.download for
+        why replacing a running app is left out.
+        """
         release = self._pending_release
-        if release is None:
+        if release is None or self._update_download is not None:
             return
-        # Opens the release page; Gstore never downloads or installs anything
-        # on its own. Unsigned builds should be fetched deliberately.
-        webbrowser.open(release.url)
+
+        if asset_name() is None or not release.assets:
+            # No build for this machine, or a release published before
+            # signing existed. The page is the honest fallback.
+            webbrowser.open(release.url)
+            return
+
+        self.update_get_button.setEnabled(False)
+        self.update_label.setText(f"Downloading Gstore {release.version}…")
+
+        worker = UpdateDownloadWorker(release, config.data_dir() / "updates", self)
+        worker.progress.connect(self._on_update_progress)
+        worker.succeeded.connect(self._on_update_downloaded)
+        worker.failed.connect(self._on_update_download_failed)
+        worker.rejected.connect(self._on_update_rejected)
+        worker.finished.connect(self._on_update_download_finished)
+        self._update_download = worker
+        worker.start()
+
+    def _on_update_progress(self, fraction: float) -> None:
+        release = self._pending_release
+        if release is not None:
+            self.update_label.setText(
+                f"Downloading Gstore {release.version}… {fraction * 100:.0f}%"
+            )
+
+    def _on_update_downloaded(self, path: str) -> None:
+        self.update_label.setText("Downloaded and verified.")
+        QMessageBox.information(
+            self,
+            "Update downloaded",
+            f"Gstore {self._pending_release.version} was downloaded and its "
+            "signature checked against Gstore's release key.\n\n"
+            f"{path}\n\nOpen it to install. Your accounts, files and shares "
+            "are untouched by this.",
+        )
+        self._reveal(path)
+
+    def _on_update_rejected(self, message: str) -> None:
+        self.update_label.setText("That download could not be verified.")
+        QMessageBox.critical(self, "Update not verified", message)
+
+    def _on_update_download_failed(self, message: str) -> None:
+        self.update_label.setText("The download did not finish.")
+        QMessageBox.warning(
+            self,
+            "Download failed",
+            f"{message}\n\nYou can download it from the releases page "
+            "instead.",
+        )
+
+    def _on_update_download_finished(self) -> None:
+        self._update_download = None
+        self.update_get_button.setEnabled(True)
+
+    @staticmethod
+    def _reveal(path: str) -> None:
+        """Show the downloaded file in the system file manager."""
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["open", "-R", path], check=False)
+            elif sys.platform.startswith("win"):
+                subprocess.run(["explorer", "/select,", path], check=False)
+            else:
+                subprocess.run(
+                    ["xdg-open", str(Path(path).parent)], check=False
+                )
+        except OSError:
+            pass  # revealing is a convenience; the path is in the dialog
 
     def _on_update_skip(self) -> None:
         release = self._pending_release

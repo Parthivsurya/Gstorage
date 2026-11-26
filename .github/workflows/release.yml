@@ -144,6 +144,30 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - uses: actions/checkout@v4
+        with:
+          path: source
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Signs every asset with the project's Ed25519 key, writing <asset>.sig
+      # beside it. This is what lets the app install an update it fetched
+      # itself: such a file carries no quarantine mark, so neither Gatekeeper
+      # nor SmartScreen will vet it and the signature is the only thing
+      # standing between a user and whatever was served to them.
+      #
+      # Not a code signing certificate and not a substitute for one — this
+      # proves the file to Gstore, not to the operating system.
+      - name: Sign the assets
+        env:
+          GSTORE_SIGNING_KEY: ${{ secrets.GSTORE_SIGNING_KEY }}
+        run: |
+          python -m pip install --quiet "cryptography>=42.0"
+          python source/packaging/sign_release.py artifacts
+          ls -l artifacts/
+
       # The "What's new" section below is written per release and does NOT
       # update itself — rewrite it when cutting the next version, or that
       # version ships describing this one.
