@@ -15,6 +15,27 @@ import os
 
 import pytest
 
+# Windows has no geteuid, and evaluating it inside a skipif decorator runs at
+# collection time -- so an unguarded call there does not skip a test, it stops
+# the whole module from being collected and takes the suite down with it.
+_POSIX = os.name == "posix"
+
+
+def _symlinks_work(tmp_path) -> bool:
+    """Whether this machine lets an unprivileged process make a symlink.
+
+    Windows needs Developer Mode or admin rights, so the symlink rules are
+    checked where they can be and skipped where they cannot. The behaviour
+    they cover is the walk's, not the platform's.
+    """
+    probe = tmp_path / "__symlink_probe"
+    try:
+        probe.symlink_to(tmp_path)
+    except (OSError, NotImplementedError):
+        return False
+    probe.unlink()
+    return True
+
 from gstore.local_tree import (
     SKIPPED_DEPENDENCY,
     SKIPPED_HIDDEN,
@@ -127,6 +148,8 @@ def test_a_dot_directory_is_not_descended_into(tmp_path):
 
 
 def test_a_symlinked_file_is_skipped(tmp_path):
+    if not _symlinks_work(tmp_path):
+        pytest.skip("this platform will not create symlinks here")
     _tree(tmp_path, {"real.txt": b"x"})
     (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
 
@@ -137,6 +160,8 @@ def test_a_symlinked_file_is_skipped(tmp_path):
 
 
 def test_a_symlink_loop_does_not_hang_the_walk(tmp_path):
+    if not _symlinks_work(tmp_path):
+        pytest.skip("this platform will not create symlinks here")
     """A link to its own parent is an infinite tree if it is followed."""
     _tree(tmp_path, {"sub/a.txt": b"x"})
     (tmp_path / "sub" / "loop").symlink_to(tmp_path, target_is_directory=True)
@@ -148,6 +173,8 @@ def test_a_symlink_loop_does_not_hang_the_walk(tmp_path):
 
 
 def test_a_symlink_out_of_the_tree_is_not_followed(tmp_path):
+    if not _symlinks_work(tmp_path):
+        pytest.skip("this platform will not create symlinks here")
     """Following it would upload files outside the folder the user picked."""
     outside = tmp_path.parent / "outside_tree"
     outside.mkdir(exist_ok=True)
@@ -163,7 +190,10 @@ def test_a_symlink_out_of_the_tree_is_not_followed(tmp_path):
     assert "secret.txt" not in {f.path.name for f in plan.files}
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can read anything")
+@pytest.mark.skipif(
+    not _POSIX or (_POSIX and os.geteuid() == 0),
+    reason="chmod 000 does not deny reads on Windows, and root ignores it",
+)
 def test_an_unreadable_directory_is_recorded_not_raised(tmp_path):
     _tree(tmp_path, {"good.txt": b"x", "locked/inside.txt": b"y"})
     locked = tmp_path / "locked"
