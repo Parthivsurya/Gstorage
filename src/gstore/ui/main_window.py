@@ -32,6 +32,7 @@ from gstore.ui.storage_panel import StoragePanel
 from gstore.ui.update_download_worker import UpdateDownloadWorker
 from gstore.ui.update_worker import UpdateWorker
 from gstore.updater.download import asset_name
+from gstore.updater.install import InstallError, begin_install, can_install
 
 
 class MainWindow(QMainWindow):
@@ -67,6 +68,9 @@ class MainWindow(QMainWindow):
 
         self._update_worker: UpdateWorker | None = None
         self._update_download: UpdateDownloadWorker | None = None
+        # Set once an update helper is waiting on this process to exit,
+        # so the close path does not ask about transfers a second time.
+        self._installing = False
         self._pending_release = None
         self._start_update_check()
 
@@ -190,15 +194,67 @@ class MainWindow(QMainWindow):
 
     def _on_update_downloaded(self, path: str) -> None:
         self.update_label.setText("Downloaded and verified.")
-        QMessageBox.information(
+        version = self._pending_release.version
+        installable, why = can_install()
+
+        if not installable:
+            # Running from source, or installed somewhere this user cannot
+            # write. Showing them the file is the honest fallback.
+            QMessageBox.information(
+                self,
+                "Update downloaded",
+                f"Gstore {version} was downloaded and its signature checked "
+                f"against Gstore's release key.\n\n{path}\n\nOpen it to "
+                f"install. ({why})",
+            )
+            self._reveal(path)
+            return
+
+        answer = QMessageBox.question(
             self,
-            "Update downloaded",
-            f"Gstore {self._pending_release.version} was downloaded and its "
-            "signature checked against Gstore's release key.\n\n"
-            f"{path}\n\nOpen it to install. Your accounts, files and shares "
-            "are untouched by this.",
+            "Install the update?",
+            f"Gstore {version} was downloaded and its signature checked "
+            "against Gstore's release key.\n\nGstore will quit, replace "
+            "itself, and start again. Your accounts, files and shares are "
+            "stored separately and are not touched.\n\nInstall now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
-        self._reveal(path)
+        if answer != QMessageBox.StandardButton.Yes:
+            self._reveal(path)
+            return
+        self._install_and_quit(Path(path), version)
+
+    def _install_and_quit(self, archive: Path, version: str) -> None:
+        """Stage the update, start the helper, then quit so it can proceed.
+
+        The order is the whole point. A transfer still running is asked about
+        *before* anything is staged, because the helper waits on this
+        process's id — start it and then stay open, and it waits for an exit
+        that never comes.
+        """
+        if not self.file_browser.prepare_to_close():
+            self.update_label.setText("Install cancelled; the file is saved.")
+            return
+
+        self.update_label.setText(f"Installing Gstore {version}…")
+        try:
+            begin_install(archive, config.data_dir() / "updates")
+        except InstallError as exc:
+            QMessageBox.warning(
+                self,
+                "Could not install the update",
+                f"{exc}\n\nGstore has not been changed. The downloaded file "
+                f"is still at:\n{archive}",
+            )
+            self.update_label.setText("Install failed; the file is saved.")
+            return
+
+        # The helper is now waiting for this process to exit. Quitting is
+        # what lets it start, and close() runs the normal shutdown so no
+        # thread is destroyed mid-flight.
+        self._installing = True
+        self.close()
 
     def _on_update_rejected(self, message: str) -> None:
         self.update_label.setText("That download could not be verified.")
@@ -247,7 +303,7 @@ class MainWindow(QMainWindow):
         get one of their own — without this, a running upload QThread is
         destroyed mid-flight and the process aborts rather than quitting.
         """
-        if not self.file_browser.prepare_to_close():
+        if not self._installing and not self.file_browser.prepare_to_close():
             event.ignore()
             return
         worker = self._update_worker
