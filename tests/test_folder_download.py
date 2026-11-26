@@ -157,3 +157,163 @@ def test_every_descendant_resolves_to_a_path_inside_the_destination(index, tmp_p
         assert root in path.resolve().parents or path.resolve().parent == root, (
             f"{entry.name} resolved outside the destination: {path}"
         )
+
+
+# -- fetching in parallel ----------------------------------------------------
+#
+# Folder download was a plain for-loop while folder upload ran eight at a
+# time, which is why 282 files crawled. These cover the driver that replaced
+# it, and the byte-total bug that made the reading say "2.5 KB of 497.0 KB"
+# while fetching 309 MB.
+
+import threading
+from pathlib import Path as _Path
+
+from gstore.ui import folder_download_worker as fdw
+
+
+class _Entry:
+    def __init__(self, entry_id, name, size, account=1, chunked=False):
+        self.id = entry_id
+        self.name = name
+        self.size_bytes = size
+        self.home_account_id = account
+        self.drive_file_id = f"drive-{name}"
+        self.md5 = "m"
+        self.is_chunked = chunked
+        self.is_available = True
+
+
+class _Accounts:
+    def get_credentials(self, account_id):
+        return f"creds{account_id}"
+
+
+@pytest.fixture
+def dworker(tmp_path):
+    w = fdw.FolderDownloadWorker(1, str(tmp_path / "out"), "Pics")
+    w._batch_bytes = 0
+    w._bytes_done = 0
+    w._done = 0
+    return w
+
+
+def _jobs(tmp_path, n, size=100):
+    out = tmp_path / "out"
+    return [
+        (_Entry(i, f"f{i}.png", size), out / f"f{i}.png") for i in range(n)
+    ]
+
+
+def test_every_whole_file_is_fetched(dworker, tmp_path, monkeypatch):
+    got: list[str] = []
+    lock = threading.Lock()
+
+    def fake(creds, drive_id, dest, expected_md5=None, **kw):
+        with lock:
+            got.append(drive_id)
+        _Path(dest).write_bytes(b"x")
+
+    monkeypatch.setattr(fdw, "download_file", fake)
+    jobs = _jobs(tmp_path, 10)
+    dworker._batch_bytes = 1000
+
+    downloaded, failed = dworker._download_in_parallel(jobs, _Accounts(), 10)
+
+    assert (downloaded, failed) == (10, 0)
+    assert len(got) == 10
+
+
+def test_the_fetches_really_overlap(dworker, tmp_path, monkeypatch):
+    """The whole point: 282 files must not be 282 sequential requests."""
+    import time
+
+    peak = live = 0
+    lock = threading.Lock()
+
+    def fake(creds, drive_id, dest, expected_md5=None, **kw):
+        nonlocal peak, live
+        with lock:
+            live += 1
+            peak = max(peak, live)
+        time.sleep(0.05)
+        with lock:
+            live -= 1
+        _Path(dest).write_bytes(b"x")
+
+    monkeypatch.setattr(fdw, "download_file", fake)
+    dworker._batch_bytes = 1200
+
+    dworker._download_in_parallel(_jobs(tmp_path, 12), _Accounts(), 12)
+
+    assert peak > 1, "files were fetched one at a time"
+
+
+def test_one_failure_does_not_abandon_the_rest(dworker, tmp_path, monkeypatch):
+    def fake(creds, drive_id, dest, expected_md5=None, **kw):
+        if drive_id == "drive-f3.png":
+            raise RuntimeError("Drive said no")
+        _Path(dest).write_bytes(b"x")
+
+    monkeypatch.setattr(fdw, "download_file", fake)
+    dworker._batch_bytes = 800
+
+    downloaded, failed = dworker._download_in_parallel(
+        _jobs(tmp_path, 8), _Accounts(), 8
+    )
+
+    assert (downloaded, failed) == (7, 1)
+
+
+def test_destination_directories_are_made_before_fetching(
+    dworker, tmp_path, monkeypatch
+):
+    """A worker writing into a directory that does not exist would fail."""
+    written: list[str] = []
+
+    def fake(creds, drive_id, dest, expected_md5=None, **kw):
+        assert _Path(dest).parent.is_dir(), f"missing directory for {dest}"
+        written.append(str(dest))
+        _Path(dest).write_bytes(b"x")
+
+    monkeypatch.setattr(fdw, "download_file", fake)
+    out = tmp_path / "out"
+    jobs = [
+        (_Entry(0, "a.png", 10), out / "2024" / "jan" / "a.png"),
+        (_Entry(1, "b.png", 10), out / "2024" / "feb" / "b.png"),
+    ]
+    dworker._batch_bytes = 20
+
+    downloaded, _ = dworker._download_in_parallel(jobs, _Accounts(), 2)
+
+    assert downloaded == 2
+    assert len(written) == 2
+
+
+def test_progress_climbs_across_the_batch(dworker, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        fdw, "download_file",
+        lambda c, d, dest, expected_md5=None, **k: _Path(dest).write_bytes(b"x"),
+    )
+    seen: list[float] = []
+    dworker.progress.connect(seen.append)
+    dworker._batch_bytes = 500
+
+    dworker._download_in_parallel(_jobs(tmp_path, 5), _Accounts(), 5)
+
+    assert seen and max(seen) == pytest.approx(1.0)
+    assert sorted(seen) == seen, "progress went backwards"
+
+
+def test_a_files_own_size_does_not_overwrite_the_folder_total(dworker):
+    """The '2.5 KB of 497.0 KB' bug: the per-file total clobbered the batch."""
+    seen: list[int] = []
+    dworker.total_bytes.connect(seen.append)
+
+    dworker._emit_total(497_000)   # what one file's download would announce
+
+    assert seen == [], "a single file's size must not replace the folder's"
+
+
+def test_nothing_to_fetch_is_not_an_error(dworker):
+    assert dworker._download_in_parallel([], _Accounts(), 0) == (0, 0)

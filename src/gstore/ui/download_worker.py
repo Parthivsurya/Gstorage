@@ -42,6 +42,16 @@ class DownloadWorker(QThread):
         """One file's 0.0-1.0 completion; see UploadWorker._emit_progress."""
         self.progress.emit(fraction)
 
+    def _emit_total(self, size_bytes: int) -> None:
+        """This file's size, for the byte counts beside the bar.
+
+        A hook for the same reason as _emit_progress: during a folder
+        download the total is the folder's, and announcing each file's own
+        size would overwrite it — the reading said "2.5 KB of 497.0 KB" while
+        fetching 309 MB.
+        """
+        self.total_bytes.emit(size_bytes)
+
     def run(self) -> None:
         db = Database().open()
         accounts = AccountStore(db)
@@ -89,7 +99,7 @@ class DownloadWorker(QThread):
             )
 
         if entry.size_bytes:
-            self.total_bytes.emit(entry.size_bytes)
+            self._emit_total(entry.size_bytes)
         download_file(
             credentials,
             entry.drive_file_id,
@@ -115,7 +125,7 @@ class DownloadWorker(QThread):
 
         total = sum(c.size_bytes for c in chunks)
         if total:
-            self.total_bytes.emit(total)
+            self._emit_total(total)
 
         def announce(number: int, count: int) -> None:
             # Chunks complete out of order now, so this is "how many are done"

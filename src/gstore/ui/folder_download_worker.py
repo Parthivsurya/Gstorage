@@ -18,6 +18,12 @@ download path already follows it.
 
 from __future__ import annotations
 
+from concurrent.futures import (
+    ALL_COMPLETED,
+    ThreadPoolExecutor,
+    as_completed,
+    wait,
+)
 from pathlib import Path
 
 from PySide6.QtCore import Signal
@@ -25,6 +31,8 @@ from PySide6.QtCore import Signal
 from gstore.applog import get as get_logger
 from gstore.auth.accounts import AccountStore
 from gstore.db import Database
+from gstore.drive.chunk_upload import stream_count
+from gstore.drive.download import download_file
 from gstore.drive.rate_limit import Cancelled
 from gstore.index import IndexStore
 from gstore.ui.download_worker import DownloadWorker
@@ -83,6 +91,8 @@ class FolderDownloadWorker(DownloadWorker):
         self._batch_bytes = 0
         self._bytes_done = 0
         self._current_size = 0
+        self._done = 0
+        self._stopped = False
 
     def run(self) -> None:
         db = Database().open()
@@ -102,38 +112,59 @@ class FolderDownloadWorker(DownloadWorker):
             self.total_bytes.emit(self._batch_bytes)
             self.progress.emit(0.0)
 
-            for number, entry in enumerate(entries, start=1):
-                if self.isInterruptionRequested():
-                    self.cancelled.emit()
-                    return
-
+            # Decide every destination up front, on this thread: resolving
+            # one reads the index, and a worker may not reach back into a
+            # SQLite connection it does not own.
+            jobs = []
+            for entry in entries:
                 rel = relative_dirs(index, self.folder_id, entry.parent_id)
                 target_dir = root.joinpath(*(safe_name(p) for p in rel))
-                destination = target_dir / safe_name(entry.name)
+                jobs.append((entry, target_dir / safe_name(entry.name)))
 
-                self.overall.emit(number, total)
-                self.status.emit(f"{entry.name}  ({number} of {total})")
-
-                self._current_size = entry.size_bytes
+            pending = []
+            for entry, destination in jobs:
                 if self._already_downloaded(destination, entry.size_bytes):
                     skipped += 1
                     self._bytes_done += entry.size_bytes
-                    self._report()
                     continue
-
                 if not entry.is_available:
                     failed += 1
                     self.file_failed.emit(
                         entry.name, "its account is not linked right now"
                     )
-                    # Still credit its bytes, or the bar stalls for every
-                    # file that was never going to be fetched.
                     self._bytes_done += entry.size_bytes
-                    self._report()
                     continue
+                pending.append((entry, destination))
+            self._report()
 
+            # Whole files fetch in parallel. Chunked ones stay sequential:
+            # each already pulls its own pieces across accounts at the same
+            # width, and stacking the two multiplies the streams against a
+            # shared per-user rate limit.
+            simple = [j for j in pending if not j[0].is_chunked]
+            chunked = [j for j in pending if j[0].is_chunked]
+            total = len(pending)
+            self._done = 0
+
+            got, fell = self._download_in_parallel(
+                simple, accounts, total
+            )
+            downloaded += got
+            failed += fell
+            if self._stopped:
+                self.cancelled.emit()
+                return
+
+            for entry, destination in chunked:
+                if self.isInterruptionRequested():
+                    self.cancelled.emit()
+                    return
+                self._done += 1
+                self._current_size = entry.size_bytes
+                self.overall.emit(self._done, total)
+                self.status.emit(f"{entry.name}  ({self._done} of {total})")
                 try:
-                    target_dir.mkdir(parents=True, exist_ok=True)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
                     self.file_id = entry.id
                     self.dest_path = str(destination)
                     error = self._download_one(accounts, index, db)
@@ -160,6 +191,93 @@ class FolderDownloadWorker(DownloadWorker):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
         finally:
             db.close()
+
+    def _download_in_parallel(self, jobs, accounts, total) -> tuple[int, int]:
+        """Fetch the whole-file downloads concurrently.
+
+        Only the network and the write to disk happen in the pool. Index
+        reads were all done before it started, and nothing here writes to the
+        database — which is what makes this simpler than the upload side.
+        """
+        downloaded = failed = 0
+        self._stopped = False
+        if not jobs:
+            return 0, 0
+
+        creds = {
+            entry.home_account_id: accounts.get_credentials(entry.home_account_id)
+            for entry, _ in jobs
+        }
+        for _, destination in jobs:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+        def fetch(position: int):
+            entry, destination = jobs[position]
+            download_file(
+                creds[entry.home_account_id],
+                entry.drive_file_id,
+                destination,
+                expected_md5=entry.md5,
+            )
+            return entry
+
+        workers = min(stream_count() * 2, len(jobs))
+        log.info(
+            "folder download: %d whole file(s) over %d streams", len(jobs), workers
+        )
+        handled: set = set()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(fetch, i): i for i in range(len(jobs))}
+            for future in as_completed(futures):
+                if self.isInterruptionRequested():
+                    self._stopped = True
+                    break
+                handled.add(future)
+                got, fell = self._settle(future, futures, jobs, total)
+                downloaded += got
+                failed += fell
+
+            if self._stopped:
+                for waiting in futures:
+                    waiting.cancel()
+                finished, _ = wait(futures, return_when=ALL_COMPLETED)
+                for future in finished:
+                    if future in handled or future.cancelled():
+                        continue
+                    got, fell = self._settle(
+                        future, futures, jobs, total, announce=False
+                    )
+                    downloaded += got
+                    failed += fell
+        return downloaded, failed
+
+    def _settle(
+        self, future, futures, jobs, total, announce: bool = True
+    ) -> tuple[int, int]:
+        """Account for one finished download. Returns (downloaded, failed)."""
+        entry, _destination = jobs[futures[future]]
+        self._bytes_done += entry.size_bytes
+        try:
+            future.result()
+        except Cancelled:
+            self._stopped = True
+            return 0, 0
+        except Exception as exc:  # noqa: BLE001 -- counted, not fatal
+            self.file_failed.emit(entry.name, f"{type(exc).__name__}: {exc}")
+            if announce:
+                self._done += 1
+                self.overall.emit(self._done, total)
+            self._report()
+            return 0, 1
+        if announce:
+            self._done += 1
+            self.overall.emit(self._done, total)
+            self.status.emit(f"{entry.name}  ({self._done} of {total})")
+        self._report()
+        return 1, 0
+
+    def _emit_total(self, size_bytes: int) -> None:
+        """Ignored: the total shown is the folder's, set once at the start."""
 
     def _report(self) -> None:
         if self._batch_bytes:
