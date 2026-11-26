@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gstore 0.1.5 Release Notes</title>
+<meta name="description" content="Release notes for Gstore 0.1.5 — upload and download whole folders, and keep everything in one folder on each Drive.">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1b1f24; --muted: #5b6672; --rule: #e3e7eb;
+    --accent: #2d4f7c; --code-bg: #f4f6f8;
+    --warn-bg: #fff8e6; --warn-rule: #e0c069; --measure: 46rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#15181c; --fg:#e6e9ec; --muted:#9aa5b1; --rule:#2b3139;
+      --accent:#8fb6e8; --code-bg:#1e232a; --warn-bg:#2a2418; --warn-rule:#6d5a2a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#15181c; --fg:#e6e9ec; --muted:#9aa5b1; --rule:#2b3139;
+    --accent:#8fb6e8; --code-bg:#1e232a; --warn-bg:#2a2418; --warn-rule:#6d5a2a;
+  }
+  body { background:var(--bg); color:var(--fg); margin:0;
+         padding-block:3rem; padding-inline:1rem;
+         font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+              "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing:antialiased; }
+  main { max-width:var(--measure); margin:0 auto; }
+  h1 { font-size:2.1rem; line-height:1.2; margin:0 0 .3rem; letter-spacing:-.02em; }
+  h2 { font-size:1.35rem; margin:2.5rem 0 .75rem; padding-top:1.5rem;
+       border-top:1px solid var(--rule); letter-spacing:-.01em; }
+  a { color:var(--accent); }
+  .sub { color:var(--muted); margin:0 0 2rem; }
+  .lede { font-size:1.1rem; }
+  code, pre { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+              font-size:.875em; }
+  code { background:var(--code-bg); padding:.12em .35em; border-radius:3px; }
+  pre { background:var(--code-bg); padding:.9rem 1rem; border-radius:6px;
+        overflow-x:auto; line-height:1.5; }
+  pre code { background:none; padding:0; }
+  .note { background:var(--warn-bg); border-left:3px solid var(--warn-rule);
+          padding:.85rem 1rem; border-radius:0 5px 5px 0; margin:1.25rem 0; }
+  .note p:first-child { margin-top:0; } .note p:last-child { margin-bottom:0; }
+  .masthead { display:flex; align-items:center; gap:.9rem; margin-bottom:.3rem; }
+  .masthead img { width:56px; height:56px; border-radius:12px; flex:none; }
+  .masthead h1 { margin:0; }
+  @media (max-width:28rem) { .masthead img { width:44px; height:44px; } }
+  footer { margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--rule);
+           color:var(--muted); font-size:.9rem; }
+</style>
+</style>
+</head>
+<body>
+<main>
+
+<div class="masthead">
+  <img src="../assets/gstore_logo_120.png" alt="" width="120" height="120">
+  <h1>Gstore 0.1.5</h1>
+</div>
+<p class="sub">26 November 2026 &middot; previous release <code>0.1.3</code>, 28 October</p>
+
+<p class="lede">
+  Folders, in both directions. And everything Gstore writes now lives in one
+  tidy folder on each account instead of loose in your Drive.
+</p>
+
+<h2>Upload a folder</h2>
+
+<p>
+  <strong>Upload folder</strong> sits beside <strong>Upload file</strong> on
+  the Files tab. The folder's structure is kept, and its files are spread
+  across whichever linked accounts have room.
+</p>
+
+<p>
+  A folder larger than any single account needs nothing special. Each file is
+  placed on its own, so a 40&nbsp;GB folder simply fills two 15&nbsp;GB
+  accounts between them; and a single file too big for <em>every</em> account
+  is still split into 50&nbsp;MB pieces across several, exactly as it always
+  was.
+</p>
+
+<p>
+  Before anything starts you are told how many files and how much data, so a
+  folder is never a surprise. <strong>Dependency directories are left out</strong>
+  &mdash; <code>node_modules</code>, <code>__pycache__</code>,
+  <code>build</code>, <code>dist</code> and the like. They are rebuilt from a
+  manifest rather than written by hand, and they dwarf everything else: one
+  project folder tested here went from 17,995 files to 60. The count left out
+  is shown, never hidden, and hidden files and symlinks are skipped too.
+</p>
+
+<h2>Download a folder</h2>
+
+<p>
+  Select a folder and press <strong>Download</strong>. It is rebuilt on disk
+  from wherever its pieces live &mdash; across accounts, and across the
+  50&nbsp;MB chunks of any file that was split &mdash; with every file checked
+  against its checksum on the way in.
+</p>
+
+<h2>Both directions are faster, and both can be resumed</h2>
+
+<ul>
+  <li><strong>Eight files at a time</strong>, up and down, rather than one
+      after another.</li>
+  <li><strong>Small files go up in a single request</strong> instead of
+      opening a resumable session they have nothing to resume, which is most
+      of what made a folder of small files slow.</li>
+  <li><strong>Stopping is not starting over.</strong> Both directions skip
+      what is already there, so a transfer interrupted at file 200 of 282
+      does the remaining 82 next time, not all 282.</li>
+</ul>
+
+<h2>Your Drive stays tidy</h2>
+
+<p>
+  Until now every file Gstore uploaded landed loose in My&nbsp;Drive's root
+  &mdash; and since a large file is stored as 50&nbsp;MB pieces, a single
+  20&nbsp;GB upload scattered more than four hundred of them across the top
+  level of your own Drive.
+</p>
+
+<p>
+  Everything now goes inside a single <strong>Gstore</strong> folder on each
+  account. <strong>Tidy up my Drive</strong>, on the Storage tab, moves files
+  uploaded by earlier versions into it.
+</p>
+
+<div class="note">
+  <p>
+    <strong>Tidying moves nothing but a label.</strong> Drive is asked to
+    change each file's parent, so nothing is re-uploaded, nothing is
+    re-downloaded, and no file identifier changes &mdash; which means
+    <strong>share links you have already sent keep working</strong>. 414 files
+    took about 70 seconds here. You can also rename or move the Gstore folder
+    afterwards; Gstore follows it.
+  </p>
+</div>
+
+<h2>Large files start sooner</h2>
+
+<p>
+  A file split across accounts used to be read from end to end to compute its
+  checksum <em>before</em> the first piece was sent &mdash; minutes, on a
+  20&nbsp;GB file, with a progress bar that could not move. The checksum now
+  runs alongside the upload, so the transfer begins at once. The same check is
+  still made, and a download still verifies against it.
+</p>
+
+<h2>Upgrading</h2>
+
+<p>
+  Replace the application. The local index updates itself on first launch and
+  keeps everything: linked accounts, stored files, and existing shares. Files
+  uploaded by earlier versions stay exactly where they are in your Drive until
+  you choose to tidy them.
+</p>
+
+<footer>
+  <p>
+    <a href="https://github.com/Parthivsurya/Gstorage/releases/tag/v0.1.5">Release on GitHub</a>
+    &middot; <a href="https://github.com/Parthivsurya/Gstorage/compare/v0.1.3...v0.1.5">Full diff from 0.1.3</a>
+    &middot; <a href="./">All release notes</a>
+    &middot; <a href="../">Gstore</a>
+  </p>
+</footer>
+
+</main>
+</body>
+</html>
