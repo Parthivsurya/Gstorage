@@ -180,19 +180,15 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "Gstore ${GITHUB_REF_NAME}" \
             --notes-file - <<'NOTES'
-          ## What's new in 0.1.5
+          ## What's new in 0.1.6
 
-          **Folders, in both directions.** Upload a folder and its structure is kept, with the files spread across whichever accounts have room. A folder larger than any single account needs nothing special, because each file is placed independently and one too big for all of them is still split across several. Download a folder and it is rebuilt from wherever its pieces live, every file checksum-verified on the way in.
+          **Updating is one button now.** When a new version exists, pressing **Download** on the notice fetches the build for your machine, checks it, and shows you the file. No going to the releases page, no choosing between three downloads, and no way to end up with the wrong one — an Intel Mac is told plainly that there is no build for it rather than handed something that cannot run.
 
-          - **Faster.** Both directions transfer eight files at a time, and small files go up in a single request instead of opening a resumable session they have nothing to resume.
-          - **Interrupted transfers carry on.** Both directions skip what is already there, so stopping at file 200 of 282 and starting again does the remaining 82, not all 282.
-          - **Dependency folders are left out.** `node_modules`, `__pycache__`, `build` and the like, with the count shown before anything starts. One project folder here went from 17,995 files to 60.
+          **Releases are signed.** Every download is published with a signature made by Gstore's release key, and the app refuses anything that does not match it. This is not a code signing certificate and does not change what your operating system says on first launch — it proves to Gstore that a file is the one that was built here, which is what makes fetching an update inside the app safe to do at all.
 
-          **Your Drive stays tidy.** Everything Gstore writes now goes inside a single `Gstore` folder on each account instead of loose in My Drive's root. **Tidy up my Drive** on the Storage tab moves files uploaded by earlier versions into it — metadata only, so nothing is re-uploaded, nothing is re-downloaded, and existing share links keep working.
+          Nothing is installed for you. The verified file is saved and shown; opening it is still your move. A download whose signature does not check out is discarded rather than saved, and you are told why.
 
-          **Large files start sooner.** A file split across accounts used to be read end to end for its checksum before the first piece went out — minutes of a progress bar that could not move. The checksum now runs while the pieces upload, so the transfer starts immediately.
-
-          Upgrading is automatic and keeps everything: the local index migrates itself on first launch, and files uploaded by earlier versions stay exactly where they are until you choose to tidy them.
+          The privacy policy has been updated to describe exactly what the app now requests and when. Turning the update check off still means nothing is downloaded at all.
 
           ## Downloads
 

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gstore 0.1.6 Release Notes</title>
+<meta name="description" content="Release notes for Gstore 0.1.6 — updating is one button, and every release is now signed.">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1b1f24; --muted: #5b6672; --rule: #e3e7eb;
+    --accent: #2d4f7c; --code-bg: #f4f6f8;
+    --warn-bg: #fff8e6; --warn-rule: #e0c069; --measure: 46rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#15181c; --fg:#e6e9ec; --muted:#9aa5b1; --rule:#2b3139;
+      --accent:#8fb6e8; --code-bg:#1e232a; --warn-bg:#2a2418; --warn-rule:#6d5a2a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#15181c; --fg:#e6e9ec; --muted:#9aa5b1; --rule:#2b3139;
+    --accent:#8fb6e8; --code-bg:#1e232a; --warn-bg:#2a2418; --warn-rule:#6d5a2a;
+  }
+  body { background:var(--bg); color:var(--fg); margin:0;
+         padding-block:3rem; padding-inline:1rem;
+         font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+              "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing:antialiased; }
+  main { max-width:var(--measure); margin:0 auto; }
+  h1 { font-size:2.1rem; line-height:1.2; margin:0 0 .3rem; letter-spacing:-.02em; }
+  h2 { font-size:1.35rem; margin:2.5rem 0 .75rem; padding-top:1.5rem;
+       border-top:1px solid var(--rule); letter-spacing:-.01em; }
+  a { color:var(--accent); }
+  .sub { color:var(--muted); margin:0 0 2rem; }
+  .lede { font-size:1.1rem; }
+  code, pre { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+              font-size:.875em; }
+  code { background:var(--code-bg); padding:.12em .35em; border-radius:3px; }
+  pre { background:var(--code-bg); padding:.9rem 1rem; border-radius:6px;
+        overflow-x:auto; line-height:1.5; }
+  pre code { background:none; padding:0; }
+  .note { background:var(--warn-bg); border-left:3px solid var(--warn-rule);
+          padding:.85rem 1rem; border-radius:0 5px 5px 0; margin:1.25rem 0; }
+  .note p:first-child { margin-top:0; } .note p:last-child { margin-bottom:0; }
+  .masthead { display:flex; align-items:center; gap:.9rem; margin-bottom:.3rem; }
+  .masthead img { width:56px; height:56px; border-radius:12px; flex:none; }
+  .masthead h1 { margin:0; }
+  @media (max-width:28rem) { .masthead img { width:44px; height:44px; } }
+  footer { margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--rule);
+           color:var(--muted); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+
+<div class="masthead">
+  <img src="../assets/gstore_logo_120.png" alt="" width="120" height="120">
+  <h1>Gstore 0.1.6</h1>
+</div>
+<p class="sub">26 November 2026 &middot; previous release <code>0.1.5</code>, the same day</p>
+
+<p class="lede">
+  Updating is one button, and every release is now signed.
+</p>
+
+<h2>One button</h2>
+
+<p>
+  When a newer version exists, Gstore has always shown a notice. Pressing
+  <strong>Download</strong> on it used to open your browser and leave you on
+  the releases page to work out which of three files you wanted.
+</p>
+
+<p>
+  It now fetches the build for your machine itself, checks it, and shows you
+  the file. There is no choosing, and no way to end up with the wrong one
+  &mdash; an Intel Mac is told plainly that no build exists for it, rather
+  than handed a download that cannot run.
+</p>
+
+<h2>Releases are signed</h2>
+
+<p>
+  Every download is published alongside a signature made with Gstore's
+  release key, and the app refuses anything that does not match the key built
+  into it. A download that fails the check is discarded rather than saved,
+  and you are told why.
+</p>
+
+<div class="note">
+  <p>
+    <strong>This is not a code signing certificate, and your operating system
+    will still warn you on first launch.</strong> Those are different things.
+    A certificate proves an identity to macOS or Windows; this proves to
+    <em>Gstore</em> that a file is the one that was built here. That is the
+    part that matters for an update the app fetches on your behalf, because
+    nothing else is vetting it.
+  </p>
+</div>
+
+<h2>Nothing is installed for you</h2>
+
+<p>
+  The verified file is saved into an <code>updates</code> folder inside
+  Gstore's application-data directory and revealed in your file manager.
+  Opening it is still your move. Replacing a running application is a
+  separate job, and doing it badly leaves somebody with no working app, so it
+  is not something to rush.
+</p>
+
+<h2>Privacy</h2>
+
+<p>
+  The <a href="/PRIVACY">privacy policy</a> now describes exactly what is
+  requested and when: two unauthenticated requests to GitHub, only when you
+  press Download, carrying nothing about you or your files. Turning the
+  update check off still means nothing is downloaded at all.
+</p>
+
+<h2>Upgrading</h2>
+
+<p>
+  Replace the application. Nothing changes in the local index, in linked
+  accounts, or in files already stored or shared. Because 0.1.5 and earlier
+  have no in-app download, this is the last update you fetch by hand.
+</p>
+
+<footer>
+  <p>
+    <a href="https://github.com/Parthivsurya/Gstorage/releases/tag/v0.1.6">Release on GitHub</a>
+    &middot; <a href="https://github.com/Parthivsurya/Gstorage/compare/v0.1.5...v0.1.6">Full diff from 0.1.5</a>
+    &middot; <a href="./">All release notes</a>
+    &middot; <a href="../">Gstore</a>
+  </p>
+</footer>
+
+</main>
+</body>
+</html>
