@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from gstore import __version__, config
 from gstore.db import Database
 from gstore.index import IndexStore
+from gstore.ui.about_dialog import AboutDialog
 from gstore.ui.file_browser import FileBrowser
 from gstore.ui.storage_panel import StoragePanel
 from gstore.ui.update_download_worker import UpdateDownloadWorker
@@ -57,11 +58,24 @@ class MainWindow(QMainWindow):
 
         self._build_update_banner()
 
+        # A "?" in the corner rather than a menu item: the app is unsigned and
+        # the name is unfamiliar, so what it is and who wrote it should be one
+        # click away from the window itself, not only on a website.
+        self.about_button = QPushButton("?")
+        self.about_button.setFixedSize(28, 28)
+        self.about_button.setToolTip("About Gstore")
+        self.about_button.clicked.connect(self._on_about)
+        footer = QHBoxLayout()
+        footer.setContentsMargins(12, 0, 12, 8)
+        footer.addStretch()
+        footer.addWidget(self.about_button)
+
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.update_banner)
         layout.addWidget(tabs)
+        layout.addLayout(footer)
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
@@ -73,6 +87,9 @@ class MainWindow(QMainWindow):
         self._installing = False
         self._pending_release = None
         self._start_update_check()
+
+    def _on_about(self) -> None:
+        AboutDialog(self).exec()
 
     # -- update notice --------------------------------------------------------
 

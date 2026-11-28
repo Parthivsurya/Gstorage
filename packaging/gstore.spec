@@ -37,6 +37,14 @@ from gstore import __version__ as VERSION  # noqa: E402
 
 # Only the resources the app actually reads at runtime; keeps the bundle lean.
 datas = collect_data_files("gstore", includes=["**/*.sql", "**/*.json"])
+
+# The logo the About dialog shows. Not covered by collect_data_files: the
+# asset lives outside the package, beside the icon sources. A missing file
+# degrades to a dialog without a picture rather than a broken build, which is
+# the same bargain the icon above strikes.
+_LOGO = os.path.join(ASSETS, "gstore_logo_120.png")
+if os.path.isfile(_LOGO):
+    datas += [(_LOGO, "gstore/ui")]
 hiddenimports = collect_submodules("gstore")
 
 # certifi, named explicitly rather than left to dependency analysis.
