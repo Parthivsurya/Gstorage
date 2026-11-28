@@ -231,27 +231,28 @@ class MainWindow(QMainWindow):
         if not installable:
             # Running from source, or installed somewhere this user cannot
             # write. Showing them the file is the honest fallback.
-            QMessageBox.information(
-                self,
-                "Update downloaded",
-                f"Gstore {version} was downloaded and its signature checked "
-                f"against Gstore's release key.\n\n{path}\n\nOpen it to "
-                f"install. ({why})",
-            )
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setText(f"Gstore {version} is ready to install.")
+            box.setInformativeText(f"Open the file to install it.\n\n{why}")
+            box.setDetailedText(str(path))
+            box.exec()
             self._reveal(path)
             return
 
-        answer = QMessageBox.question(
-            self,
-            "Install the update?",
-            f"Gstore {version} was downloaded and its signature checked "
-            "against Gstore's release key.\n\nGstore will quit, replace "
-            "itself, and start again. Your accounts, files and shares are "
-            "stored separately and are not touched.\n\nInstall now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        # Short on purpose. The signature check was shown while it happened,
+        # and this is a routine action a user will take every few weeks —
+        # three paragraphs of reassurance reads as a warning the second time.
+        ask = QMessageBox(self)
+        ask.setIcon(QMessageBox.Icon.Question)
+        ask.setText(f"Install Gstore {version}?")
+        ask.setInformativeText("Gstore will quit and start again.")
+        install = ask.addButton("Install", QMessageBox.ButtonRole.AcceptRole)
+        ask.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
+        ask.setDefaultButton(install)
+        ask.exec()
+
+        if ask.clickedButton() is not install:
             self._reveal(path)
             return
         self._install_and_quit(Path(path), version)
