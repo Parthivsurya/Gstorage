@@ -46,35 +46,26 @@ reaches a server of ours.
 
 ## Install
 
-### Download a build
-
 | Platform | Download |
 | --- | --- |
 | macOS (Apple silicon) | [Gstore-macos-arm64.dmg](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-macos-arm64.dmg) |
 | Windows 64-bit | [Gstore-windows-x64.zip](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-windows-x64.zip) |
 | Linux x86_64 | [Gstore-linux-x64.tar.gz](https://github.com/Parthivsurya/Gstorage/releases/latest/download/Gstore-linux-x64.tar.gz) |
 
-Those links always resolve to the newest release. What changed in each version is written up in the
-[release notes](https://gstore.iampkb.dev/release-notes/). The macOS build is
-Apple silicon only; there is no Intel build at present.
+Those links always point at the newest release; what changed in each is in the
+[release notes](https://gstore.iampkb.dev/release-notes/).
 
-**These builds are not code-signed**, so the OS will warn you on first launch:
+**The builds are not code-signed, so your OS will warn you the first time.**
+On macOS, open System Settings → Privacy & Security and choose **Open Anyway**.
+On Windows, SmartScreen says "Windows protected your PC" — choose **More info**
+→ **Run anyway**; unzip first and keep `Gstore.exe` next to its files. On Linux
+extract the tarball and run `./Gstore/Gstore`, keeping it beside its files.
 
-- **macOS** — the app is blocked the first time. Open System Settings → Privacy
-  & Security, find the notice about Gstore, and choose **Open Anyway**.
-- **Windows** — SmartScreen shows "Windows protected your PC". Choose **More
-  info** → **Run anyway**. Unzip first and run `Gstore.exe` from the extracted
-  folder, keeping it next to its files.
-- **Linux** — no warning, but Qt needs a desktop session. Extract and run the
-  binary, keeping it next to its files:
-
-  ```bash
-  tar -xzf Gstore-linux-x64.tar.gz
-  ./Gstore/Gstore
-  ```
+You only do that once. Gstore updates itself after that, and an update it
+installs raises no warning at all.
 
 macOS asks for your login keychain password once, so Gstore can store its
-encryption key. Choose **Always Allow** so it stops asking.
+encryption key. Choose **Always Allow**.
 
 ### From source
 
@@ -116,159 +107,42 @@ If an account's access is later revoked or expires, Gstore marks that row
 "needs re-link" and keeps its files listed rather than hiding them. Clicking
 **Add Google account** and signing in as that account again restores access.
 
-## How it works
+## What it does
 
-### One index, many drives
+**One drive from several accounts.** Link as many Google accounts as you like
+and Gstore shows a single folder tree across all of them, with one combined
+total. It remembers which account every file went to, so you never have to.
 
-A local SQLite database is the single source of truth for what you see. It
-holds a self-referential folder tree (`parent_id`, `NULL` at the virtual root)
-plus one row per file recording its name, size, MD5, and which account
-physically holds it. The folder tree is purely Gstore's — it exists in the index
-only, so a "folder" can contain files that live on three different Google
-accounts.
+**Files bigger than any one account.** A file that fits goes to whichever
+account has the most room. One that fits nowhere is split into 50 MB pieces
+spread across several accounts and reassembled on the way back, verified
+against its checksum. Transfers run several at a time and survive being
+interrupted — closing the app mid-upload is a pause, not a loss.
 
-The database is created on first launch under your OS app-data directory, next
-to everything else Gstore writes:
+**Folders, both directions.** Upload a folder and its structure is kept, its
+files spread across whichever accounts have room; download one and it is
+rebuilt from wherever the pieces live. Dependency directories like
+`node_modules` are left out, with the count shown before anything starts.
+Stopping and starting again picks up where it left off rather than beginning
+over.
 
-| | |
-| --- | --- |
-| macOS | `~/Library/Application Support/Gstore/gstore.db` |
-| Linux | `~/.local/share/Gstore/gstore.db` |
-| Windows | `%LOCALAPPDATA%\Gstore\gstore.db` |
+**Share a file with a link.** Whoever you send it to needs no Gstore, no
+Google account and no sign-in — the file comes straight from Google to them.
+Stop sharing and the link stops working.
 
-### Choosing where a file goes
+**Your Drive stays tidy.** Everything Gstore writes lives in a single `Gstore`
+folder on each account rather than loose in My Drive. **Tidy up my Drive** on
+the Storage tab moves files from older versions into it, without re-uploading
+anything or breaking links you have already sent.
 
-On upload Gstore reads each account's last quota snapshot and picks
-**most-free-first among the accounts the file actually fits in**. An account
-with unlimited storage wins outright; accounts with no quota snapshot yet are
-skipped.
+**It updates itself.** Every release is signed, and Gstore refuses an update
+that does not match its key. Press Download and it fetches the right build for
+your machine, checks it, replaces itself and restarts.
 
-Whole-file placement is the default on purpose: a file lives entirely on one
-account, so one lost or locked account can never corrupt files held elsewhere,
-and Drive's native preview keeps working.
-
-When a file fits in *no* single account, Gstore falls back to splitting it into
-fixed **50 MB chunks** spread across several accounts. Chunked files carry no
-home account; their pieces are tracked individually and the whole-file checksum
-is kept so reassembly can be verified end to end.
-
-### Uploads and downloads
-
-<img src="assets/screenshots/uploading.png" width="880"
-     alt="Gstore uploading a 20 GB file: 46% done, 9.1 GB of 20.0 GB, 1.6 MB/s, 1 hour 55 minutes remaining, with a Cancel button beside the progress bar.">
-
-
-**Several chunks move at once.** A single connection to Google is held well
-below what a modern link can carry — latency and per-connection limits, not
-bandwidth — so one chunk at a time left most of the line idle. Measured on a
-5G connection rated 80 Mb/s:
-
-| Direction | One at a time | Concurrent | |
-| --- | --- | --- | --- |
-| Download | 0.87 MB/s | 3.78 MB/s | **4.3×** |
-| Upload | 0.49 MB/s | 1.20 MB/s | **2.5×** |
-
-Four streams by default — deliberately short of what the link can take, since
-every stream spends Drive API quota and shares a per-user rate limit. Raise it
-with `GSTORE_DOWNLOAD_STREAMS` and `GSTORE_UPLOAD_STREAMS` (max 16).
-
-**An interrupted transfer resumes, in both directions.** Uploads record each
-finished chunk against the local file's identity (path + size + mtime), so any
-edit to the file invalidates the stale progress. Downloads accumulate into a
-sibling `.gstore-part` file and record which chunks arrived; the destination
-only appears once the whole-file checksum passes, so it never holds partial or
-unverified data. Pick the same file or destination again and it continues.
-
-**Cancelling is pausing.** What has already moved is kept, so a cancelled
-transfer resumes exactly like an interrupted one. Quitting mid-transfer offers
-the same, rather than losing the work.
-
-Content MD5 is checked against Drive's own `md5Checksum` on the way up, and
-each chunk is hashed as it streams on the way back down, with the reassembled
-file verified against the original's checksum before it is put in place.
-
-Every Drive API call goes through one retry wrapper that backs off
-exponentially on `429`, `500`, `502`, `503`, `403 rateLimitExceeded` /
-`userRateLimitExceeded` — and on transport failures, which is the common case:
-a dropped link, a reset connection, DNS briefly vanishing. A blip slows a
-transfer down instead of ending it.
-
-### Sharing a file by link
-
-**Share** on the Files tab turns a stored file into a link anyone can download
-it with. The recipient needs Gstore, and nothing else — no Gstore account, no
-Google account, no sign-in, and none of the sender's accounts linked.
-
-That works because every piece is an ordinary Drive file Gstore created, so
-`drive.file` is enough to mark it readable by anyone holding its id. The
-recipient then fetches it over a plain HTTPS request with no token at all. No
-restricted scope is involved on either side.
-
-The link does not name the pieces. A 20 GB file is 409 of them, and listing
-their ids costs about 26 KB — far past what anyone can paste into a chat. So
-the list is itself uploaded to Drive as a small file, and the link points at
-that:
-
-```
-https://gstore.iampkb.dev/s#<manifest-id>.<key>
-                            └──────── fragment ────────┘
-```
-
-Two things follow from the shape of that URL:
-
-- **Everything identifying sits after the `#`.** Browsers never send a fragment
-  in a request, so the page that URL resolves to — a static page explaining how
-  to open the link — never learns which file is being shared. There is no
-  server in this feature at all.
-- **The list is encrypted, with the key only in the link.** Reaching the
-  manifest file without the link yields ciphertext, so the piece ids stay
-  unknown. That protects the ids, not the bytes: anyone you send the link to
-  can read the file and pass that ability on.
-
-**Stop sharing** makes every piece private again and deletes the manifest, so
-the link stops working — but, like any share link, it cannot recall a copy
-someone already downloaded. Gstore records which files have live links so a
-share can be withdrawn later; that record is the only thing that knows the
-manifest's id once the link has been handed out.
-
-Received files are verified the same way downloads are: each piece against its
-own checksum as it streams, then the whole file against the sender's, before
-the destination appears. That matters more here than elsewhere — an
-unauthenticated Drive endpoint answers a withdrawn or rate-limited share with
-an HTML page and a `200`, so "50 MB of HTML" is a real thing that can land
-mid-file.
-
-### Keeping the index honest
-
-Because the index is a cache of someone else's state, it can drift: you might
-delete a Gstore file from the Drive web UI directly. **Repair / re-sync** on the
-Storage tab walks each linked account and reconciles both directions — pruning
-index rows for files that no longer exist, and recovering Gstore files that
-exist on Drive but went missing from the index.
-
-Deleting a folder spans accounts, and partial failures are reported rather than
-silently swallowed.
-
-### Browsing
-
-The **Files** tab renders the virtual tree with breadcrumb navigation, in three
-view modes — **List** (detailed rows), **Grid** (wrapping icons), and
-**Gallery** (large tiles that fill in with real Drive thumbnails, fetched on a
-background thread). You can upload, download, rename, delete, and create
-folders from here.
-
-**Scan Drive now** is different: instead of reading the index, it queries every
-linked account live and shows one combined listing of *all* their files,
-including files Gstore never created. This needs the opt-in whole-Drive
-permission described below. Deleting from a scan moves the file to Drive's
-Trash, where it stays recoverable — it is not a permanent erase.
-
-### Credentials
-
-Google refresh tokens are serialised, **Fernet-encrypted**, and stored in the
-local database. The master key is never on disk: it lives in your OS keychain
-(Keychain on macOS, Credential Manager on Windows, Secret Service on Linux) via
-`keyring`, fetched once per process. Access tokens refresh automatically.
+**It repairs itself.** **Repair / re-sync** reconciles the index against what
+is actually in each Drive: files deleted elsewhere are dropped, files it finds
+that the index lost are recovered, and leftovers from abandoned uploads are
+cleaned up.
 
 ## What Gstore can see
 
@@ -280,12 +154,10 @@ work.
 | `drive.file` | Always | Only the files Gstore itself created. Enough for pooled storage totals, uploads, downloads, and managing Gstore's own files. Not a restricted scope. |
 | `drive` | Opt-in only | Full Drive access, needed for the combined **Scan Drive now** view over files Gstore did not create, and for trashing one of them. |
 
-The full `drive` scope is **restricted** by Google: it is granted only to a
-verified app holding a current CASA security assessment. Requesting it from
-every user would put an "app not verified" wall in front of everyone, so Gstore
-does not ask for it by default. Enable it with the `GSTORE_FULL_DRIVE`
-environment variable (development) or by creating a `full_drive.enabled` marker
-file in the app-data directory.
+Google restricts the full `drive` scope, and asking for it would put an "app
+not verified" screen in front of everyone, so Gstore does not. Turn it on with
+the `GSTORE_FULL_DRIVE` environment variable or a `full_drive.enabled` file in
+the app-data directory.
 
 Scope changes only affect accounts linked *afterwards*. An existing token keeps
 whatever it was granted until you re-link that account — **Add Google
@@ -293,57 +165,15 @@ account** again, signing in as the same account — so until then an older
 account still shows only its Gstore files in a scan and cannot trash
 anything else.
 
-Apart from one update check, Gstore makes **no network requests to anywhere
-but Google**. At startup it asks GitHub's public releases endpoint whether a
-newer version exists — an anonymous `GET` carrying no account data, no file
-names and no identifier — and shows a notice if one does. Nothing is
-downloaded or installed automatically. Switch it off with
-`GSTORE_NO_UPDATE_CHECK=1`, or by creating `update_check.disabled` in the
-app-data directory, and the app contacts nothing but Google.
+Apart from updates, Gstore makes **no network requests to anywhere but
+Google**. At startup it asks GitHub whether a newer version exists — an
+anonymous `GET` carrying no account data, no file names and no identifier.
+Nothing is downloaded until you press Download, and nothing is installed until
+you say so. Switch the whole thing off with `GSTORE_NO_UPDATE_CHECK=1`, or an
+`update_check.disabled` file in the app-data directory, and Gstore contacts
+nothing but Google.
 
 For what is stored and what is not, see [PRIVACY.md](PRIVACY.md).
-
-## Project layout
-
-```
-src/gstore/
-  app.py              entry point — opens the DB, launches the window
-  config.py           app-data paths, opt-in whole-Drive flag
-  format.py           human-readable byte sizes
-  auth/
-    oauth.py          PKCE loopback sign-in, scope sets
-    accounts.py       linked-account records
-    keystore.py       Fernet master key, held in the OS keychain
-  db/
-    database.py       SQLite connection + schema bootstrap
-    schema.sql        accounts, folders, files, uploads, chunks
-  drive/
-    placement.py      which account a file goes to; chunk planning
-    upload.py         resumable upload
-    download.py       download + checksum verify
-    chunk_upload.py   split an oversized file across accounts
-    chunk_download.py fetch the pieces back and reassemble
-    browse.py         live multi-account listing ("Scan Drive now")
-    delete.py         Drive-side delete / trash
-    quota.py          about.get storage snapshots
-    hashing.py        MD5 integrity checks
-    rate_limit.py     exponential-backoff retry wrapper
-    reconcile.py      index <-> Drive repair
-  index/
-    store.py          index reads and writes
-    uploads.py        in-flight resumable upload sessions
-    pending_chunks.py which chunks of a chunked upload already landed
-    backup.py         index backup
-  ui/
-    main_window.py    Files / Storage tabs
-    file_browser.py   virtual tree, List / Grid / Gallery
-    storage_panel.py  pooled totals, Add Google account, Repair / re-sync
-    account_row.py    one account's usage bar and re-link notice
-    *_worker.py       one QThread worker per long Drive operation
-tests/                pytest suite
-packaging/            PyInstaller spec, icon and DMG builders
-docs/                 historical implementation plan
-```
 
 ## Development
 
@@ -412,38 +242,26 @@ Markdown file is public unless you add it there.
 
 ## Status
 
-Current version **0.1.8**, built for macOS, Windows and Linux. See the
-[release notes](https://gstore.iampkb.dev/release-notes/) for what changed.
-
-Everything the app is for works and has been exercised on a real 20 GB file:
-multi-account sign-in, pooled totals, the unified folder tree, smart placement,
-chunking across accounts, concurrent resumable transfers in both directions,
-deletes spanning accounts, index repair, and the live combined Drive scan. That
-file went up through four interruptions, came back through another, and
-arrived byte-for-byte identical.
+Current version **0.1.8**, for macOS, Windows and Linux. A 20 GB file has been
+through it end to end — up through four interruptions, back through another,
+byte-for-byte identical — and a 282-file folder has made the same round trip.
 
 Known gaps, honestly:
 
-- **Not code-signed or notarized**, so every platform warns on first launch.
+- **Not code-signed or notarized**, so every platform warns on a first install.
+  Updates Gstore installs itself do not.
 - **The Linux build has never been launched on a real Linux desktop.** It
   compiles and its tests pass headless in CI; nobody has run the GUI.
-- **A chunk needs one account with room for the whole chunk.** Pooled free
-  space spread thinly across many accounts will not place a file even when the
-  total would fit.
-- **A fresh chunked upload reads the file twice** — once to checksum, once to
-  send. Resumed uploads skip the first pass; fresh ones do not yet.
-- **No folder upload**, and long filenames clip in Grid and Gallery view.
+- **A chunk needs one account with room for the whole 50 MB chunk.** Pooled
+  space spread very thinly will not place a file even when the total would fit.
+- **A shared download cannot be resumed.** If the connection drops, the
+  recipient starts that file again.
+- **Scan Drive needs the opt-in flag**, and because the full-Drive permission
+  is one Google restricts, enabling it shows an "app not verified" screen.
+- Long filenames clip in Grid and Gallery view.
 
-Still ahead:
-
-- Code signing and notarization.
-- Google OAuth verification + CASA assessment, to make the whole-Drive scan
-  available without the opt-in flag.
-- A FUSE mount, exposing the pool as a real filesystem.
-
-The original design document, including the reasoning behind the early
-decisions and the parts that did not survive contact with reality, is kept at
-[docs/implementation-plan.md](docs/implementation-plan.md).
+Still ahead: code signing, and a FUSE mount exposing the pool as a real
+filesystem.
 
 ## Licence
 
