@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gstore 0.1.7 Release Notes</title>
+<meta name="description" content="Release notes for Gstore 0.1.7 — Gstore installs its own updates.">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1b1f24; --muted: #5b6672; --rule: #e3e7eb;
+    --accent: #2d4f7c; --code-bg: #f4f6f8;
+    --warn-bg: #fff8e6; --warn-rule: #e0c069; --measure: 46rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#15181c; --fg:#e6e9ec; --muted:#9aa5b1; --rule:#2b3139;
+      --accent:#8fb6e8; --code-bg:#1e232a; --warn-bg:#2a2418; --warn-rule:#6d5a2a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#15181c; --fg:#e6e9ec; --muted:#9aa5b1; --rule:#2b3139;
+    --accent:#8fb6e8; --code-bg:#1e232a; --warn-bg:#2a2418; --warn-rule:#6d5a2a;
+  }
+  body { background:var(--bg); color:var(--fg); margin:0;
+         padding-block:3rem; padding-inline:1rem;
+         font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+              "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing:antialiased; }
+  main { max-width:var(--measure); margin:0 auto; }
+  h1 { font-size:2.1rem; line-height:1.2; margin:0 0 .3rem; letter-spacing:-.02em; }
+  h2 { font-size:1.35rem; margin:2.5rem 0 .75rem; padding-top:1.5rem;
+       border-top:1px solid var(--rule); letter-spacing:-.01em; }
+  a { color:var(--accent); }
+  .sub { color:var(--muted); margin:0 0 2rem; }
+  .lede { font-size:1.1rem; }
+  code, pre { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+              font-size:.875em; }
+  code { background:var(--code-bg); padding:.12em .35em; border-radius:3px; }
+  pre { background:var(--code-bg); padding:.9rem 1rem; border-radius:6px;
+        overflow-x:auto; line-height:1.5; }
+  pre code { background:none; padding:0; }
+  .note { background:var(--warn-bg); border-left:3px solid var(--warn-rule);
+          padding:.85rem 1rem; border-radius:0 5px 5px 0; margin:1.25rem 0; }
+  .note p:first-child { margin-top:0; } .note p:last-child { margin-bottom:0; }
+  .masthead { display:flex; align-items:center; gap:.9rem; margin-bottom:.3rem; }
+  .masthead img { width:56px; height:56px; border-radius:12px; flex:none; }
+  .masthead h1 { margin:0; }
+  @media (max-width:28rem) { .masthead img { width:44px; height:44px; } }
+  footer { margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--rule);
+           color:var(--muted); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+
+<div class="masthead">
+  <img src="../assets/gstore_logo_120.png" alt="" width="120" height="120">
+  <h1>Gstore 0.1.7</h1>
+</div>
+<p class="sub">28 November 2026 &middot; previous release <code>0.1.6</code>, 26 November</p>
+
+<p class="lede">
+  Gstore installs its own updates.
+</p>
+
+<h2>One press, start to finish</h2>
+
+<p>
+  0.1.6 learned to fetch an update and check it. This one finishes the job:
+  press <strong>Download</strong> on the update notice and Gstore fetches the
+  build for your machine, verifies its signature, quits, replaces itself and
+  starts again.
+</p>
+
+<p>
+  No releases page, no choosing between three files, and nothing to drag into
+  Applications.
+</p>
+
+<h2>And no warning from the operating system</h2>
+
+<p>
+  Gatekeeper and SmartScreen trigger on a mark that <em>browsers</em> attach
+  to downloaded files. A file an application fetched for itself does not carry
+  one, so an update installed this way raises no prompt at all.
+</p>
+
+<div class="note">
+  <p>
+    That is also why Gstore signs its releases and refuses anything that does
+    not match its key. With the operating system stepping out of the way, the
+    signature is what stands in its place. It is still not a code signing
+    certificate, and the first copy you install by hand will still be
+    questioned.
+  </p>
+</div>
+
+<h2>What happens if it goes wrong</h2>
+
+<p>
+  The installed copy is moved aside and only deleted once the replacement is
+  in place. If the swap fails, the old version goes straight back. Being left
+  on an older version is an inconvenience; being left with no application is
+  not, and the order of operations exists to make the second impossible.
+</p>
+
+<p>
+  Your accounts, files, shares and the index that maps them live in Gstore's
+  application-data directory, never inside the app itself, so none of this
+  touches them.
+</p>
+
+<h2>When it cannot</h2>
+
+<p>
+  If Gstore is running from source, or installed somewhere you do not have
+  permission to write, it says so plainly and shows you the downloaded file
+  instead of failing partway.
+</p>
+
+<h2>Upgrading</h2>
+
+<p>
+  This one you still install by hand &mdash; 0.1.6 and earlier can download an
+  update but not apply it. It is the last time.
+</p>
+
+<footer>
+  <p>
+    <a href="https://github.com/Parthivsurya/Gstorage/releases/tag/v0.1.7">Release on GitHub</a>
+    &middot; <a href="https://github.com/Parthivsurya/Gstorage/compare/v0.1.6...v0.1.7">Full diff from 0.1.6</a>
+    &middot; <a href="./">All release notes</a>
+    &middot; <a href="../">Gstore</a>
+  </p>
+</footer>
+
+</main>
+</body>
+</html>

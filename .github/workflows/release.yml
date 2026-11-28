@@ -180,15 +180,15 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "Gstore ${GITHUB_REF_NAME}" \
             --notes-file - <<'NOTES'
-          ## What's new in 0.1.6
+          ## What's new in 0.1.7
 
-          **Updating is one button now.** When a new version exists, pressing **Download** on the notice fetches the build for your machine, checks it, and shows you the file. No going to the releases page, no choosing between three downloads, and no way to end up with the wrong one — an Intel Mac is told plainly that there is no build for it rather than handed something that cannot run.
+          **Gstore installs its own updates now.** Press **Download** on the update notice and it fetches the build for your machine, checks its signature, replaces itself and starts again. No releases page, no dragging anything to Applications, and no warning from macOS or Windows — those warnings come from a mark the browser puts on a download, and a file the app fetched does not carry one.
 
-          **Releases are signed.** Every download is published with a signature made by Gstore's release key, and the app refuses anything that does not match it. This is not a code signing certificate and does not change what your operating system says on first launch — it proves to Gstore that a file is the one that was built here, which is what makes fetching an update inside the app safe to do at all.
+          The old copy is moved aside and only deleted once the new one is in place, so a failed update leaves you on the version you had rather than with no application at all. Your accounts, files and shares live outside the app and are not touched either way.
 
-          Nothing is installed for you. The verified file is saved and shown; opening it is still your move. A download whose signature does not check out is discarded rather than saved, and you are told why.
+          If Gstore cannot replace itself — it is running from source, or installed somewhere you cannot write to — it says so and shows you the downloaded file instead.
 
-          The privacy policy has been updated to describe exactly what the app now requests and when. Turning the update check off still means nothing is downloaded at all.
+          This is the first version that can install an update. Getting *to* it still means replacing the app by hand; everything after it does not.
 
           ## Downloads
 
