@@ -233,7 +233,9 @@ class MainWindow(QMainWindow):
             # write. Showing them the file is the honest fallback.
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Icon.Information)
-            box.setText(f"Gstore {version} is ready to install.")
+            box.setText(
+                f"Update  {__version__} \u2192 {version}  is ready to install."
+            )
             box.setInformativeText(f"Open the file to install it.\n\n{why}")
             box.setDetailedText(str(path))
             box.exec()
@@ -245,7 +247,10 @@ class MainWindow(QMainWindow):
         # three paragraphs of reassurance reads as a warning the second time.
         ask = QMessageBox(self)
         ask.setIcon(QMessageBox.Icon.Question)
-        ask.setText(f"Install Gstore {version}?")
+        # Both numbers, not just the new one: "0.1.7 -> 0.1.8" says what is
+        # being left behind as well as what arrives, which is the thing
+        # someone deciding whether to update actually wants to see.
+        ask.setText(f"Install update  {__version__} \u2192 {version}?")
         ask.setInformativeText("Gstore will quit and start again.")
         install = ask.addButton("Install", QMessageBox.ButtonRole.AcceptRole)
         ask.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
