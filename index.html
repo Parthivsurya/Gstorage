@@ -116,7 +116,7 @@
 
       <p class="dl__count" id="dl-count" hidden>
         <span class="dl__count-num" id="dl-count-num"></span>
-        <span class="dl__count-label">downloads so far</span>
+        <span class="dl__count-label">downloads across all releases</span>
       </p>
 
       <div class="platforms" id="platforms">
@@ -300,8 +300,13 @@
   fetch(API, { headers: { Accept: 'application/vnd.github+json' } })
     .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
     .then(function (releases) {
+      /* Only the builds. Each release also carries a 64-byte .sig beside
+         every asset, and the in-app updater fetches one with each download —
+         counting those inflated the figure by roughly a sixth and measured
+         nothing a person did. */
       var total = releases.reduce(function (sum, rel) {
         return sum + (rel.assets || []).reduce(function (s, a) {
+          if (/\.sig$/.test(a.name || '')) return s;
           return s + (a.download_count || 0);
         }, 0);
       }, 0);
