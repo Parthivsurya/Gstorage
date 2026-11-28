@@ -31,6 +31,7 @@ from gstore.ui.about_dialog import AboutDialog
 from gstore.ui.file_browser import FileBrowser
 from gstore.ui.storage_panel import StoragePanel
 from gstore.ui.update_download_worker import UpdateDownloadWorker
+from gstore.ui.update_progress_dialog import UpdateProgressDialog
 from gstore.ui.update_worker import UpdateWorker
 from gstore.updater.download import asset_name
 from gstore.updater.install import InstallError, begin_install, can_install
@@ -82,6 +83,7 @@ class MainWindow(QMainWindow):
 
         self._update_worker: UpdateWorker | None = None
         self._update_download: UpdateDownloadWorker | None = None
+        self._update_progress: UpdateProgressDialog | None = None
         # Set once an update helper is waiting on this process to exit,
         # so the close path does not ask about transfers a second time.
         self._installing = False
@@ -191,25 +193,37 @@ class MainWindow(QMainWindow):
             return
 
         self.update_get_button.setEnabled(False)
-        self.update_label.setText(f"Downloading Gstore {release.version}…")
+
+        dialog = UpdateProgressDialog(release.version, self)
+        self._update_progress = dialog
 
         worker = UpdateDownloadWorker(release, config.data_dir() / "updates", self)
         worker.progress.connect(self._on_update_progress)
+        # Cancelling the dialog stops the worker; the worker finishing closes
+        # the dialog. Either way only one of them ends the pair.
+        dialog.rejected.connect(worker.requestInterruption)
+        dialog.cancel.clicked.connect(worker.requestInterruption)
         worker.succeeded.connect(self._on_update_downloaded)
         worker.failed.connect(self._on_update_download_failed)
         worker.rejected.connect(self._on_update_rejected)
+        worker.cancelled.connect(self._on_update_cancelled)
         worker.finished.connect(self._on_update_download_finished)
         self._update_download = worker
         worker.start()
+        dialog.show()
 
-    def _on_update_progress(self, fraction: float) -> None:
-        release = self._pending_release
-        if release is not None:
-            self.update_label.setText(
-                f"Downloading Gstore {release.version}… {fraction * 100:.0f}%"
-            )
+    def _on_update_progress(self, read: int, total: int) -> None:
+        if self._update_progress is not None:
+            self._update_progress.on_progress(read, total)
+
+    def _close_update_progress(self) -> None:
+        dialog = self._update_progress
+        self._update_progress = None
+        if dialog is not None:
+            dialog.close()
 
     def _on_update_downloaded(self, path: str) -> None:
+        self._close_update_progress()
         self.update_label.setText("Downloaded and verified.")
         version = self._pending_release.version
         installable, why = can_install()
@@ -273,11 +287,17 @@ class MainWindow(QMainWindow):
         self._installing = True
         self.close()
 
+    def _on_update_cancelled(self) -> None:
+        self._close_update_progress()
+        self.update_label.setText("Download stopped.")
+
     def _on_update_rejected(self, message: str) -> None:
+        self._close_update_progress()
         self.update_label.setText("That download could not be verified.")
         QMessageBox.critical(self, "Update not verified", message)
 
     def _on_update_download_failed(self, message: str) -> None:
+        self._close_update_progress()
         self.update_label.setText("The download did not finish.")
         QMessageBox.warning(
             self,
@@ -287,6 +307,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_update_download_finished(self) -> None:
+        self._close_update_progress()
         self._update_download = None
         self.update_get_button.setEnabled(True)
 

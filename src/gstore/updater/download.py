@@ -42,6 +42,7 @@ TIMEOUT_SEC = 60
 _READ_SIZE = 256 * 1024
 
 __all__ = [
+    "DownloadCancelled",
     "DownloadError",
     "SignatureError",
     "UpdateFile",
@@ -52,6 +53,10 @@ __all__ = [
 
 class DownloadError(Exception):
     """The update could not be fetched."""
+
+
+class DownloadCancelled(Exception):
+    """The user stopped the download. Not a failure, and not reported as one."""
 
 
 @dataclass(frozen=True)
@@ -94,14 +99,16 @@ def _fetch(url: str, timeout: int, on_progress=None, should_stop=None) -> bytes:
             read = 0
             while True:
                 if should_stop is not None and should_stop():
-                    raise DownloadError("the download was stopped")
+                    raise DownloadCancelled("the download was stopped")
                 block = response.read(_READ_SIZE)
                 if not block:
                     break
                 chunks.append(block)
                 read += len(block)
-                if on_progress is not None and total:
-                    on_progress(min(read / total, 1.0))
+                if on_progress is not None:
+                    # Bytes, not a fraction: the dialog shows "45 MB of 76 MB"
+                    # and a speed, and neither can be recovered from a ratio.
+                    on_progress(read, total)
             return b"".join(chunks)
     except urllib.error.HTTPError as exc:
         raise DownloadError(f"the server answered {exc.code} for {url}") from exc
@@ -128,7 +135,7 @@ def download_update(
     assets: list[dict],
     version: str,
     destination: Path,
-    on_progress: Callable[[float], None] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> UpdateFile:
     """Download this platform's asset into `destination` and verify it.

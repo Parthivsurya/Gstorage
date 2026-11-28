@@ -13,6 +13,7 @@ from PySide6.QtCore import QThread, Signal
 
 from gstore.applog import get as get_logger
 from gstore.updater.download import (
+    DownloadCancelled,
     DownloadError,
     SignatureError,
     download_update,
@@ -22,13 +23,18 @@ log = get_logger(__name__)
 
 
 class UpdateDownloadWorker(QThread):
-    progress = Signal(float)          # 0.0 - 1.0
+    # read, total. qint64 because Signal(int) is a 32-bit C++ int and a
+    # release asset is already a third of the way to overflowing it.
+    progress = Signal("qint64", "qint64")
     succeeded = Signal(str)           # path to the verified file
     failed = Signal(str)
     # Separate from `failed`: a signature that does not check out is not a
     # network problem, and the user should be told plainly that what arrived
     # was not a genuine release rather than invited to retry.
     rejected = Signal(str)
+    # Distinct from `failed`: the user pressed Cancel, and being shown a
+    # warning for doing what they asked for is its own small insult.
+    cancelled = Signal()
 
     def __init__(self, release, destination: Path, parent=None) -> None:
         super().__init__(parent)
@@ -44,6 +50,9 @@ class UpdateDownloadWorker(QThread):
                 on_progress=self.progress.emit,
                 should_stop=self.isInterruptionRequested,
             )
+        except DownloadCancelled:
+            self.cancelled.emit()
+            return
         except SignatureError as exc:
             log.error("update signature rejected: %s", exc)
             self.rejected.emit(str(exc))
