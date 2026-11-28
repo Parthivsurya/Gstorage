@@ -412,7 +412,7 @@ Markdown file is public unless you add it there.
 
 ## Status
 
-Current version **0.1.7**, built for macOS, Windows and Linux. See the
+Current version **0.1.8**, built for macOS, Windows and Linux. See the
 [release notes](https://gstore.iampkb.dev/release-notes/) for what changed.
 
 Everything the app is for works and has been exercised on a real 20 GB file:

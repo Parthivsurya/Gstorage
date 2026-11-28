@@ -180,15 +180,15 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "Gstore ${GITHUB_REF_NAME}" \
             --notes-file - <<'NOTES'
-          ## What's new in 0.1.7
+          ## What's new in 0.1.8
 
-          **Gstore installs its own updates now.** Press **Download** on the update notice and it fetches the build for your machine, checks its signature, replaces itself and starts again. No releases page, no dragging anything to Applications, and no warning from macOS or Windows — those warnings come from a mark the browser puts on a download, and a file the app fetched does not carry one.
+          **A progress window for updates.** Downloading a new version used to report a bare percentage, which cannot tell you whether a slow download is working or stuck. You now get a window with how much has arrived of how much, the current speed, and the time remaining — the speed measured over the last few seconds, so it reflects what your connection is doing now rather than how it started.
 
-          The old copy is moved aside and only deleted once the new one is in place, so a failed update leaves you on the version you had rather than with no application at all. Your accounts, files and shares live outside the app and are not touched either way.
+          Cancelling is no longer treated as a failure, and checking the signature on a 70 MB file says so rather than looking like the window has frozen.
 
-          If Gstore cannot replace itself — it is running from source, or installed somewhere you cannot write to — it says so and shows you the downloaded file instead.
+          **A "?" in the bottom-right corner.** It opens an About window: the version, who wrote Gstore, what it does, and links to the privacy policy, the licence, the release notes and the source. It also says the thing most worth knowing — Gstore keeps the only record of which account each file lives on, so back up the index from the Storage tab and keep that backup somewhere else.
 
-          This is the first version that can install an update. Getting *to* it still means replacing the app by hand; everything after it does not.
+          If you are on 0.1.7, this is the first update Gstore can install for you: press Download and it fetches, verifies, replaces itself and restarts.
 
           ## Downloads
 
